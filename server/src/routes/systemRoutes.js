@@ -4,7 +4,8 @@ import { analyzeProblem } from "../services/aiService.js";
 import { buildApiDocs } from "../services/apiDocsService.js";
 import { buildDiagnostics } from "../services/diagnosticsService.js";
 import { requireAdmin, requireUser } from "../http/requestContext.js";
-import { readJson, sendJson } from "../utils/http.js";
+import { parseTextRequest } from "../dto/requestDtos.js";
+import { sendJson } from "../utils/http.js";
 
 export async function handleSystemRoutes(req, res, store, { pathname, method, uploadRoot, startedAt }) {
   if (method === "GET" && pathname === "/api/health") {
@@ -31,8 +32,8 @@ export async function handleSystemRoutes(req, res, store, { pathname, method, up
   }
 
   if (method === "POST" && pathname === "/api/ai/analyze") {
-    const body = await readJson(req);
-    sendJson(res, 200, analyzeProblem(String(body.text ?? "")));
+    const { text } = await parseTextRequest(req);
+    sendJson(res, 200, analyzeProblem(text));
     return true;
   }
 

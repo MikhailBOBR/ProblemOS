@@ -1,11 +1,9 @@
 import { assertRole, canAccessCase, ROLES } from "../services/rbacService.js";
+import { createRepositories } from "../repositories/index.js";
 import { createHttpError, getBearerToken } from "../utils/http.js";
 
 export function findUserByToken(data, token) {
-  if (!token || !data.sessions[token]) {
-    return null;
-  }
-  return data.users.find((user) => user.id === data.sessions[token].userId) ?? null;
+  return createRepositories(data).users.findByToken(token);
 }
 
 export async function requireUser(req, store) {
@@ -22,7 +20,7 @@ export function requireAdmin(user) {
 }
 
 export function getCaseForUser(data, user, caseId) {
-  const problemCase = data.cases.find((item) => item.id === caseId);
+  const problemCase = createRepositories(data).cases.findById(caseId);
   if (!problemCase) {
     throw createHttpError(404, "Дело не найдено");
   }
@@ -33,17 +31,13 @@ export function getCaseForUser(data, user, caseId) {
 }
 
 export function findEvidenceForUser(data, user, evidenceId) {
-  for (const problemCase of data.cases) {
-    const evidence = (problemCase.evidence ?? []).find((item) => item.id === evidenceId);
-    if (!evidence) {
-      continue;
-    }
-
-    if (!canAccessCase(user, problemCase)) {
+  const found = createRepositories(data).cases.findByEvidenceId(evidenceId);
+  if (found) {
+    if (!canAccessCase(user, found.problemCase)) {
       throw createHttpError(403, "Нет доступа к этому доказательству");
     }
 
-    return { problemCase, evidence };
+    return found;
   }
 
   throw createHttpError(404, "Доказательство не найдено");

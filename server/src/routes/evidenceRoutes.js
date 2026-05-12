@@ -4,14 +4,15 @@ import { openEvidenceFile, persistEvidenceFile, sanitizeFileName } from "../serv
 import { assertCaseEdit } from "../services/rbacService.js";
 import { findEvidenceForUser, getCaseForUser, requireUser } from "../http/requestContext.js";
 import { matchPath, replaceCase } from "../http/routing.js";
+import { parseEvidenceUploadRequest } from "../dto/requestDtos.js";
 import { createId } from "../utils/id.js";
-import { readJson, sendJson } from "../utils/http.js";
+import { sendJson } from "../utils/http.js";
 
 export async function handleEvidenceRoutes(req, res, store, { pathname, method, uploadRoot }) {
   const evidenceParams = matchPath(pathname, "/api/cases/:id/evidence");
   if (evidenceParams && method === "POST") {
     const { user } = await requireUser(req, store);
-    const body = await readJson(req);
+    const body = await parseEvidenceUploadRequest(req);
 
     const result = await store.mutate(async (data) => {
       const problemCase = getCaseForUser(data, user, evidenceParams.id);

@@ -4,7 +4,8 @@ import { buildPostgresMigrationSql } from "../services/postgresMigrationService.
 import { runDeadlineScheduler } from "../services/schedulerService.js";
 import { dispatchTelegramNotifications } from "../services/telegramDeliveryService.js";
 import { requireAdmin, requireUser } from "../http/requestContext.js";
-import { readJson, sendJson, sendText } from "../utils/http.js";
+import { optionalString, readJsonObject } from "../http/validation.js";
+import { sendJson, sendText } from "../utils/http.js";
 
 export async function handleAdminOpsRoutes(req, res, store, { pathname, method, backupRoot }) {
   if (method === "GET" && pathname === "/api/admin/stats") {
@@ -38,12 +39,13 @@ export async function handleAdminOpsRoutes(req, res, store, { pathname, method, 
   if (method === "POST" && pathname === "/api/admin/notifications/dispatch") {
     const { user } = await requireUser(req, store);
     requireAdmin(user);
-    const body = await readJson(req);
+    const body = await readJsonObject(req);
+    const token = optionalString(body, "token", { max: 4096 });
     const result = await store.mutate((data) =>
       dispatchTelegramNotifications(data, {
         actorId: user.id,
         dryRun: body.dryRun !== false,
-        token: body.token || process.env.TELEGRAM_BOT_TOKEN
+        token: token || process.env.TELEGRAM_BOT_TOKEN
       })
     );
     sendJson(res, 200, result);

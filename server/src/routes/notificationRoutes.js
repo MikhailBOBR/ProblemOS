@@ -2,15 +2,17 @@ import { appendAuditLog } from "../services/auditLogService.js";
 import { runDeadlineScheduler } from "../services/schedulerService.js";
 import { requireUser } from "../http/requestContext.js";
 import { matchPath } from "../http/routing.js";
+import { createRepositories } from "../repositories/index.js";
 import { createHttpError, sendJson } from "../utils/http.js";
 
 export async function handleNotificationRoutes(req, res, store, { pathname, method }) {
   if (method === "GET" && pathname === "/api/notifications") {
     const { user } = await requireUser(req, store);
     const result = await store.mutate((data) => {
+      const repos = createRepositories(data);
       runDeadlineScheduler(data, { actorId: "system", userId: user.id });
-      const items = data.notifications
-        .filter((item) => item.userId === user.id)
+      const items = repos.notifications
+        .listForUser(user.id)
         .sort((a, b) => new Date(b.sendAt).getTime() - new Date(a.sendAt).getTime());
       return { items, unread: items.filter((item) => !item.isRead).length };
     });
@@ -48,7 +50,8 @@ export async function handleNotificationRoutes(req, res, store, { pathname, meth
     const { user } = await requireUser(req, store);
 
     const result = await store.mutate((data) => {
-      const notification = data.notifications.find((item) => item.id === notificationParams.id && item.userId === user.id);
+      const repos = createRepositories(data);
+      const notification = repos.notifications.findForUser(notificationParams.id, user.id);
       if (!notification) {
         throw createHttpError(404, "Уведомление не найдено");
       }

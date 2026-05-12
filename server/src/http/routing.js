@@ -1,11 +1,7 @@
-import { createHttpError } from "../utils/http.js";
+import { createRepositories } from "../repositories/index.js";
 
 export function replaceCase(data, nextCase) {
-  const index = data.cases.findIndex((item) => item.id === nextCase.id);
-  if (index === -1) {
-    throw createHttpError(404, "Дело не найдено");
-  }
-  data.cases[index] = nextCase;
+  return createRepositories(data).cases.replace(nextCase);
 }
 
 export function matchPath(pathname, pattern) {
@@ -26,7 +22,7 @@ export function matchPath(pathname, pattern) {
 }
 
 export function getTemplatesForCategory(data, categoryId) {
-  return data.documentTemplates.filter((template) => template.categoryId === categoryId && template.isActive);
+  return createRepositories(data).documentTemplates.listActiveByCategory(categoryId);
 }
 
 export function filterCases(items, url) {

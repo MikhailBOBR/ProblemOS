@@ -6,16 +6,17 @@ import { appendAuditLog } from "../services/auditLogService.js";
 import { assertCaseEdit } from "../services/rbacService.js";
 import { getCaseForUser, requireUser } from "../http/requestContext.js";
 import { getTemplatesForCategory, matchPath, replaceCase, sendBuffer } from "../http/routing.js";
-import { createHttpError, readJson, sendJson, sendText } from "../utils/http.js";
+import { createRepositories } from "../repositories/index.js";
+import { parseDocumentGenerateRequest } from "../dto/requestDtos.js";
+import { createHttpError, sendJson, sendText } from "../utils/http.js";
 
 export async function handleDocumentRoutes(req, res, store, { pathname, method, url, uploadRoot }) {
   const caseDocumentsParams = matchPath(pathname, "/api/cases/:id/documents");
   if (caseDocumentsParams && method === "GET") {
     const { data, user } = await requireUser(req, store);
+    const repos = createRepositories(data);
     const problemCase = getCaseForUser(data, user, caseDocumentsParams.id);
-    const documents = (problemCase.documents ?? [])
-      .map((id) => data.generatedDocuments.find((document) => document.id === id))
-      .filter(Boolean);
+    const documents = repos.generatedDocuments.listByCaseDocumentIds(problemCase.documents);
     sendJson(res, 200, { items: documents, templates: getTemplatesForCategory(data, problemCase.categoryId) });
     return true;
   }
@@ -23,9 +24,10 @@ export async function handleDocumentRoutes(req, res, store, { pathname, method, 
   const generateParams = matchPath(pathname, "/api/cases/:id/documents/generate");
   if (generateParams && method === "POST") {
     const { user } = await requireUser(req, store);
-    const body = await readJson(req);
+    const body = await parseDocumentGenerateRequest(req);
 
     const result = await store.mutate((data) => {
+      const repos = createRepositories(data);
       const problemCase = getCaseForUser(data, user, generateParams.id);
       assertCaseEdit(user, problemCase, "Document generation denied");
       const templates = getTemplatesForCategory(data, problemCase.categoryId);
@@ -35,9 +37,9 @@ export async function handleDocumentRoutes(req, res, store, { pathname, method, 
         throw createHttpError(404, "Для категории нет активного шаблона");
       }
 
-      const owner = data.users.find((item) => item.id === problemCase.userId) ?? user;
+      const owner = repos.users.findById(problemCase.userId) ?? user;
       const document = generateDocument(problemCase, owner, template);
-      data.generatedDocuments.push(document);
+      repos.generatedDocuments.create(document);
       const nextCase = attachGeneratedDocument(problemCase, document);
       replaceCase(data, nextCase);
       appendAuditLog(data, {
@@ -82,7 +84,7 @@ export async function handleDocumentRoutes(req, res, store, { pathname, method, 
   const downloadParams = matchPath(pathname, "/api/documents/:id/download");
   if (downloadParams && method === "GET") {
     const { data, user } = await requireUser(req, store);
-    const document = data.generatedDocuments.find((item) => item.id === downloadParams.id);
+    const document = createRepositories(data).generatedDocuments.findById(downloadParams.id);
     if (!document) {
       throw createHttpError(404, "Документ не найден");
     }

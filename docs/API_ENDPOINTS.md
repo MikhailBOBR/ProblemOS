@@ -2,6 +2,8 @@
 
 Current API surface for the self-contained MVP. The live machine-readable draft is also available at `GET /api/openapi`.
 
+Request payloads are normalized through DTO helpers in `server/src/dto/requestDtos.js`. JSON API routes that accept bodies expect an object payload.
+
 ## Auth
 
 - `POST /api/auth/register` - register a user and return a bearer token.
@@ -74,3 +76,4 @@ Current API surface for the self-contained MVP. The live machine-readable draft 
 - `GET /api/admin/templates/{id}/versions` - template version history.
 - `POST /api/admin/templates/{id}/restore` - restore template from a version snapshot.
 - `GET /api/admin/migration/postgres` - PostgreSQL migration draft.
+- `GET /api/admin/migrations/postgres` - PostgreSQL migration draft alias.

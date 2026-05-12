@@ -6,21 +6,26 @@
 ProblemOS
 ├── server
 │   ├── src
-│   │   ├── data          JSON store and seed data
-│   │   ├── domain        categories, statuses, playbooks
-│   │   ├── services      cases, docs, AI-like helpers, notifications
-│   │   ├── telegram      bot adapter skeleton
-│   │   ├── utils         HTTP, security, ids
-│   │   └── index.js      server and routes
-│   └── tests             node:test coverage
-├── web                  static SPA
-└── docs                 project memory and roadmap
+│   │   ├── data            JSON store and seed data
+│   │   ├── domain          categories, statuses, playbooks
+│   │   ├── dto             request DTO parsing and normalization
+│   │   ├── http            request context, routing helpers, validation
+│   │   ├── repositories    JSON repository boundary, future PostgreSQL adapter point
+│   │   ├── routes          API route groups and admin subgroups
+│   │   ├── services        business behavior
+│   │   ├── telegram        bot adapter skeleton
+│   │   ├── utils           HTTP, security, ids
+│   │   └── index.js        composition root, static serving and startup
+│   └── tests               node:test coverage
+├── web                     static SPA
+└── docs                    project memory and roadmap
 ```
 
 ## Core Flow
 
 ```text
 Free text problem
+-> DTO validation
 -> analyzeProblem()
 -> createCase()
 -> category playbook creates steps
@@ -33,8 +38,12 @@ Free text problem
 ## Domain Boundaries
 
 - `domain/*` contains stable product vocabulary.
+- `dto/*` owns request normalization.
+- `http/*` owns request context, validation and shared routing primitives.
+- `repositories/*` owns data access contracts. The current implementation wraps JSON data; PostgreSQL repositories should mirror these methods.
+- `routes/*` owns HTTP route orchestration and stays thin.
 - `services/*` owns business behavior.
-- `index.js` only maps HTTP routes to services.
+- `index.js` composes route modules, rate limiting, static serving and startup.
 - `web/*` is intentionally thin and uses API state.
 - `audit_logs` is the append-only operational history for future admin review and migrations.
 - `timeline` remains user-facing case history; `audit_logs` remains system-facing traceability.

@@ -8,7 +8,15 @@ import { performCaseAction } from "../services/workflowService.js";
 import { assertCaseEdit, assertCaseReview, assertRole, canAccessCase, ROLES } from "../services/rbacService.js";
 import { getCaseForUser, requireUser } from "../http/requestContext.js";
 import { filterCases, matchPath, replaceCase } from "../http/routing.js";
-import { createHttpError, readJson, sendJson } from "../utils/http.js";
+import { createRepositories } from "../repositories/index.js";
+import {
+  parseCaseCreateRequest,
+  parseCaseUpdateRequest,
+  parseCommentRequest,
+  parseRecommendationRequest,
+  parseWorkflowActionRequest
+} from "../dto/requestDtos.js";
+import { sendJson } from "../utils/http.js";
 
 export async function handleCaseRoutes(req, res, store, { pathname, method, url }) {
   if (method === "GET" && pathname === "/api/cases") {
@@ -34,12 +42,13 @@ export async function handleCaseRoutes(req, res, store, { pathname, method, url 
 
   if (method === "POST" && pathname === "/api/cases") {
     const { user } = await requireUser(req, store);
-    const body = await readJson(req);
+    const body = await parseCaseCreateRequest(req);
 
     const result = await store.mutate((data) => {
+      const repos = createRepositories(data);
       const { problemCase, analysis } = createCaseFromInput(user.id, body, data.categories);
-      data.cases.push(problemCase);
-      data.notifications.push(
+      repos.cases.create(problemCase);
+      repos.notifications.create(
         createNotification({
           userId: user.id,
           caseId: problemCase.id,
@@ -90,25 +99,22 @@ export async function handleCaseRoutes(req, res, store, { pathname, method, url 
 
   if (recommendationParams && method === "POST") {
     const { user } = await requireUser(req, store);
-    const body = await readJson(req);
-    const text = String(body.text ?? "").trim();
-    if (!text) {
-      throw createHttpError(400, "Recommendation text is required");
-    }
+    const body = await parseRecommendationRequest(req);
 
     const result = await store.mutate((data) => {
+      const repos = createRepositories(data);
       const problemCase = getCaseForUser(data, user, recommendationParams.id);
       assertCaseReview(user, problemCase, "Expert review access denied");
       const recommendation = createExpertRecommendation({
         caseId: problemCase.id,
         authorId: user.id,
-        text,
+        text: body.text,
         visibility: body.visibility,
         status: body.status
       });
-      data.expertRecommendations.push(recommendation);
+      repos.recommendations.create(recommendation);
       if (recommendation.visibility === "user") {
-        data.notifications.push(
+        repos.notifications.create(
           createNotification({
             userId: problemCase.userId,
             caseId: problemCase.id,
@@ -136,7 +142,7 @@ export async function handleCaseRoutes(req, res, store, { pathname, method, url 
 
   if (caseParams && method === "PATCH") {
     const { user } = await requireUser(req, store);
-    const body = await readJson(req);
+    const body = await parseCaseUpdateRequest(req);
 
     const result = await store.mutate((data) => {
       const problemCase = getCaseForUser(data, user, caseParams.id);
@@ -162,14 +168,15 @@ export async function handleCaseRoutes(req, res, store, { pathname, method, url 
   const actionParams = matchPath(pathname, "/api/cases/:id/actions");
   if (actionParams && method === "POST") {
     const { user } = await requireUser(req, store);
-    const body = await readJson(req);
+    const body = await parseWorkflowActionRequest(req);
 
     const result = await store.mutate((data) => {
+      const repos = createRepositories(data);
       const problemCase = getCaseForUser(data, user, actionParams.id);
       assertCaseEdit(user, problemCase, "Case action denied");
       const nextCase = performCaseAction(problemCase, String(body.action ?? ""), body);
       replaceCase(data, nextCase);
-      data.notifications.push(
+      repos.notifications.create(
         createNotification({
           userId: nextCase.userId,
           caseId: nextCase.id,
@@ -212,17 +219,13 @@ export async function handleCaseRoutes(req, res, store, { pathname, method, url 
 
   if (commentsParams && method === "POST") {
     const { user } = await requireUser(req, store);
-    const body = await readJson(req);
-    const text = String(body.text ?? "").trim();
-
-    if (!text) {
-      throw createHttpError(400, "Комментарий не может быть пустым");
-    }
+    const body = await parseCommentRequest(req);
 
     const result = await store.mutate((data) => {
+      const repos = createRepositories(data);
       const problemCase = getCaseForUser(data, user, commentsParams.id);
-      const comment = createCaseComment({ caseId: problemCase.id, authorId: user.id, text });
-      data.caseComments.push(comment);
+      const comment = createCaseComment({ caseId: problemCase.id, authorId: user.id, text: body.text });
+      repos.comments.create(comment);
       appendAuditLog(data, {
         actorId: user.id,
         caseId: problemCase.id,
@@ -230,7 +233,7 @@ export async function handleCaseRoutes(req, res, store, { pathname, method, url 
         entityId: comment.id,
         action: "comment.created",
         title: "Комментарий добавлен",
-        details: { length: text.length }
+        details: { length: body.text.length }
       });
       return { item: getCaseComments(data, problemCase.id).find((item) => item.id === comment.id) };
     });

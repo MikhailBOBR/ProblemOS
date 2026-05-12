@@ -1,22 +1,18 @@
 import { appendAuditLog } from "../services/auditLogService.js";
 import { requireUser } from "../http/requestContext.js";
+import { createRepositories } from "../repositories/index.js";
+import { parseLoginRequest, parseProfileRequest, parseRegisterRequest } from "../dto/requestDtos.js";
 import { createId } from "../utils/id.js";
 import { createSessionToken, hashPassword, sanitizeUser, verifyPassword } from "../utils/security.js";
-import { createHttpError, readJson, sendJson } from "../utils/http.js";
+import { createHttpError, sendJson } from "../utils/http.js";
 
 export async function handleAuthRoutes(req, res, store, { pathname, method }) {
   if (method === "POST" && pathname === "/api/auth/register") {
-    const body = await readJson(req);
-    const email = String(body.email ?? "").trim().toLowerCase();
-    const password = String(body.password ?? "");
-    const fullName = String(body.fullName ?? "").trim();
-
-    if (!email || !password || password.length < 6) {
-      throw createHttpError(400, "Укажите email и пароль от 6 символов");
-    }
+    const { email, password, fullName } = await parseRegisterRequest(req);
 
     const result = await store.mutate((data) => {
-      if (data.users.some((user) => user.email === email)) {
+      const repos = createRepositories(data);
+      if (repos.users.findByEmail(email)) {
         throw createHttpError(409, "Пользователь с таким email уже есть");
       }
 
@@ -31,8 +27,8 @@ export async function handleAuthRoutes(req, res, store, { pathname, method }) {
         createdAt: new Date().toISOString()
       };
       const token = createSessionToken();
-      data.users.push(user);
-      data.sessions[token] = { userId: user.id, createdAt: new Date().toISOString() };
+      repos.users.create(user);
+      repos.sessions.create(token, user.id);
       appendAuditLog(data, {
         actorId: user.id,
         entityType: "user",
@@ -48,17 +44,16 @@ export async function handleAuthRoutes(req, res, store, { pathname, method }) {
   }
 
   if (method === "POST" && pathname === "/api/auth/login") {
-    const body = await readJson(req);
-    const email = String(body.email ?? "").trim().toLowerCase();
-    const password = String(body.password ?? "");
+    const { email, password } = await parseLoginRequest(req);
 
     const result = await store.mutate((data) => {
-      const user = data.users.find((item) => item.email === email);
+      const repos = createRepositories(data);
+      const user = repos.users.findByEmail(email);
       if (!user || !verifyPassword(password, user.passwordHash)) {
         throw createHttpError(401, "Неверный email или пароль");
       }
       const token = createSessionToken();
-      data.sessions[token] = { userId: user.id, createdAt: new Date().toISOString() };
+      repos.sessions.create(token, user.id);
       appendAuditLog(data, {
         actorId: user.id,
         entityType: "user",
@@ -81,14 +76,16 @@ export async function handleAuthRoutes(req, res, store, { pathname, method }) {
 
   if (method === "PATCH" && pathname === "/api/me/profile") {
     const { user } = await requireUser(req, store);
-    const body = await readJson(req);
+    const body = await parseProfileRequest(req);
 
     const result = await store.mutate((data) => {
-      const freshUser = data.users.find((item) => item.id === user.id);
+      const repos = createRepositories(data);
+      const freshUser = repos.users.findById(user.id);
       freshUser.fullName = String(body.fullName ?? freshUser.fullName).trim() || freshUser.email;
       freshUser.phone = String(body.phone ?? freshUser.phone ?? "").trim();
       freshUser.telegramId = String(body.telegramId ?? freshUser.telegramId ?? "").trim();
       freshUser.updatedAt = new Date().toISOString();
+      repos.users.replace(freshUser);
       appendAuditLog(data, {
         actorId: freshUser.id,
         entityType: "user",

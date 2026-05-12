@@ -1,13 +1,15 @@
 import { updateCategoryPlaybook } from "../services/playbookService.js";
 import { requireAdmin, requireUser } from "../http/requestContext.js";
 import { matchPath } from "../http/routing.js";
-import { createHttpError, readJson, sendJson } from "../utils/http.js";
+import { createRepositories } from "../repositories/index.js";
+import { parseAdminCategoryRequest } from "../dto/requestDtos.js";
+import { createHttpError, sendJson } from "../utils/http.js";
 
 export async function handleAdminCategoryRoutes(req, res, store, { pathname, method }) {
   if (method === "GET" && pathname === "/api/admin/categories") {
     const { data, user } = await requireUser(req, store);
     requireAdmin(user);
-    sendJson(res, 200, { items: data.categories });
+    sendJson(res, 200, { items: createRepositories(data).categories.list() });
     return true;
   }
 
@@ -15,9 +17,9 @@ export async function handleAdminCategoryRoutes(req, res, store, { pathname, met
   if (adminCategoryParams && method === "PATCH") {
     const { user } = await requireUser(req, store);
     requireAdmin(user);
-    const body = await readJson(req);
+    const body = await parseAdminCategoryRequest(req);
     const result = await store.mutate((data) => {
-      const category = data.categories.find((item) => item.id === adminCategoryParams.id);
+      const category = createRepositories(data).categories.findById(adminCategoryParams.id);
       if (!category) {
         throw createHttpError(404, "Category not found");
       }
