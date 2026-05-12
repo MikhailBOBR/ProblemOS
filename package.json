@@ -1,0 +1,14 @@
+{
+  "name": "problemos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ProblemOS / Reshator MVP: web cabinet, API, cases, evidence, deadlines and document templates.",
+  "scripts": {
+    "start": "node server/src/index.js",
+    "test": "node --test server/tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
