@@ -15,16 +15,21 @@ Implemented:
   - `GET /api/admin/analytics`
 - Wired `handleAnalyticsRoutes` into the main API router.
 - Removed analytics endpoint handling from the main routing body.
-- Kept compatibility wrappers in `index.js` for existing case/document/evidence routes. These wrappers should disappear gradually as more route modules are extracted.
+- Added `server/src/routes/authRoutes.js`.
+  - `POST /api/auth/register`
+  - `POST /api/auth/login`
+  - `GET /api/me`
+  - `PATCH /api/me/profile`
+- Wired `handleAuthRoutes` into the main API router.
+- Removed auth/profile endpoint handling from the main routing body.
 
 Next extraction order:
 
-1. `routes/authRoutes.js` for register/login/profile.
-2. `routes/caseRoutes.js` for case list/detail/update/actions.
-3. `routes/evidenceRoutes.js` for upload/download.
-4. `routes/documentRoutes.js` for templates, generation and exports.
-5. `routes/adminRoutes.js` split further into admin users, cases, templates, categories and operations.
-6. `routes/telegramRoutes.js` for webhook/link/draft.
+1. `routes/caseRoutes.js` for case list/detail/update/actions.
+2. `routes/evidenceRoutes.js` for upload/download.
+3. `routes/documentRoutes.js` for templates, generation and exports.
+4. `routes/adminRoutes.js` split further into admin users, cases, templates, categories and operations.
+5. `routes/telegramRoutes.js` for webhook/link/draft/link.
 
 Rule for future modularization:
 
