@@ -78,6 +78,9 @@ export function enrichCase(problemCase, data) {
         ? Math.round((problemCase.steps.filter((step) => step.status === STEP_STATUS.DONE).length / problemCase.steps.length) * 100)
         : 0
     },
+    auditLog: (data.auditLogs ?? [])
+      .filter((entry) => entry.caseId === problemCase.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
     documents: (problemCase.documents ?? [])
       .map((documentId) => data.generatedDocuments.find((document) => document.id === documentId))
       .filter(Boolean)

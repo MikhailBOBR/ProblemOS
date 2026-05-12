@@ -36,6 +36,8 @@ Free text problem
 - `services/*` owns business behavior.
 - `index.js` only maps HTTP routes to services.
 - `web/*` is intentionally thin and uses API state.
+- `audit_logs` is the append-only operational history for future admin review and migrations.
+- `timeline` remains user-facing case history; `audit_logs` remains system-facing traceability.
 
 ## Legal Safety
 

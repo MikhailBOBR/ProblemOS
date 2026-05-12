@@ -8,9 +8,11 @@ import { analyzeProblem } from "./services/aiService.js";
 import { addEvidenceToCase, createCaseFromInput, enrichCase, updateCaseWithInput } from "./services/caseService.js";
 import { attachGeneratedDocument, buildCasePackage, generateDocument, toRtf } from "./services/documentService.js";
 import { openEvidenceFile, persistEvidenceFile, sanitizeFileName } from "./services/fileStorageService.js";
+import { appendAuditLog, getAuditLogsForCase } from "./services/auditLogService.js";
 import { buildDeadlineNotifications, createNotification } from "./services/notificationService.js";
+import { handleTelegramUpdate } from "./services/telegramService.js";
 import { performCaseAction } from "./services/workflowService.js";
-import { createBotDraftFromMessage, extractTelegramMessage, formatTelegramCases, formatTelegramNextAction } from "./telegram/botAdapter.js";
+import { createBotDraftFromMessage } from "./telegram/botAdapter.js";
 import { createId } from "./utils/id.js";
 import { createSessionToken, hashPassword, sanitizeUser, verifyPassword } from "./utils/security.js";
 import { createHttpError, getBearerToken, parseRequestUrl, readJson, sendError, sendJson, sendText, serveStatic } from "./utils/http.js";
@@ -138,6 +140,13 @@ async function routeApi(req, res, store, options = {}) {
       const token = createSessionToken();
       data.users.push(user);
       data.sessions[token] = { userId: user.id, createdAt: new Date().toISOString() };
+      appendAuditLog(data, {
+        actorId: user.id,
+        entityType: "user",
+        entityId: user.id,
+        action: "user.registered",
+        title: "Пользователь зарегистрировался"
+      });
       return { token, user: sanitizeUser(user) };
     });
 
@@ -157,6 +166,13 @@ async function routeApi(req, res, store, options = {}) {
       }
       const token = createSessionToken();
       data.sessions[token] = { userId: user.id, createdAt: new Date().toISOString() };
+      appendAuditLog(data, {
+        actorId: user.id,
+        entityType: "user",
+        entityId: user.id,
+        action: "user.login",
+        title: "Пользователь вошел в систему"
+      });
       return { token, user: sanitizeUser(user) };
     });
 
@@ -167,6 +183,31 @@ async function routeApi(req, res, store, options = {}) {
   if (method === "GET" && pathname === "/api/me") {
     const { user } = await requireUser(req, store);
     sendJson(res, 200, { user: sanitizeUser(user) });
+    return true;
+  }
+
+  if (method === "PATCH" && pathname === "/api/me/profile") {
+    const { user } = await requireUser(req, store);
+    const body = await readJson(req);
+
+    const result = await store.mutate((data) => {
+      const freshUser = data.users.find((item) => item.id === user.id);
+      freshUser.fullName = String(body.fullName ?? freshUser.fullName).trim() || freshUser.email;
+      freshUser.phone = String(body.phone ?? freshUser.phone ?? "").trim();
+      freshUser.telegramId = String(body.telegramId ?? freshUser.telegramId ?? "").trim();
+      freshUser.updatedAt = new Date().toISOString();
+      appendAuditLog(data, {
+        actorId: freshUser.id,
+        entityType: "user",
+        entityId: freshUser.id,
+        action: "user.profile_updated",
+        title: "Профиль обновлен",
+        details: { hasTelegram: Boolean(freshUser.telegramId), hasPhone: Boolean(freshUser.phone) }
+      });
+      return { user: sanitizeUser(freshUser) };
+    });
+
+    sendJson(res, 200, result);
     return true;
   }
 
@@ -200,6 +241,15 @@ async function routeApi(req, res, store, options = {}) {
     const result = await store.mutate((data) => {
       const freshUser = data.users.find((item) => item.id === user.id);
       freshUser.telegramId = telegramId;
+      freshUser.updatedAt = new Date().toISOString();
+      appendAuditLog(data, {
+        actorId: freshUser.id,
+        entityType: "user",
+        entityId: freshUser.id,
+        action: "telegram.linked",
+        title: "Telegram ID привязан",
+        details: { telegramId }
+      });
       return { user: sanitizeUser(freshUser) };
     });
 
@@ -209,88 +259,7 @@ async function routeApi(req, res, store, options = {}) {
 
   if (method === "POST" && pathname === "/api/telegram/webhook") {
     const update = await readJson(req);
-    const message = extractTelegramMessage(update);
-
-    if (!message.telegramId) {
-      throw createHttpError(400, "В webhook нет Telegram ID");
-    }
-
-    const result = await store.mutate((data) => {
-      const telegramUser = data.users.find((item) => String(item.telegramId) === String(message.telegramId));
-
-      if (!telegramUser) {
-        return {
-          ok: true,
-          chatId: message.chatId,
-          text: "Аккаунт не привязан. Откройте сайт ProblemOS и привяжите Telegram ID в профиле."
-        };
-      }
-
-      const userCases = data.cases.filter((item) => item.userId === telegramUser.id);
-      const text = message.text.trim();
-
-      if (text === "/start" || text === "/help") {
-        return {
-          ok: true,
-          chatId: message.chatId,
-          text: "ProblemOS готов. Команды: /newcase описание, /mycases, /next."
-        };
-      }
-
-      if (text === "/mycases") {
-        return {
-          ok: true,
-          chatId: message.chatId,
-          text: formatTelegramCases(userCases)
-        };
-      }
-
-      if (text === "/next") {
-        return {
-          ok: true,
-          chatId: message.chatId,
-          text: formatTelegramNextAction(userCases)
-        };
-      }
-
-      if (text.startsWith("/newcase")) {
-        const description = text.replace("/newcase", "").trim();
-        if (!description) {
-          return {
-            ok: true,
-            chatId: message.chatId,
-            text: "Напишите так: /newcase Купил товар, он сломался, магазин не возвращает деньги"
-          };
-        }
-
-        const { problemCase, analysis } = createCaseFromInput(telegramUser.id, { description });
-        data.cases.push(problemCase);
-        data.notifications.push(
-          createNotification({
-            userId: telegramUser.id,
-            caseId: problemCase.id,
-            type: "telegram_case_created",
-            title: "Дело создано через Telegram",
-            message: problemCase.nextAction
-          })
-        );
-
-        return {
-          ok: true,
-          chatId: message.chatId,
-          caseId: problemCase.id,
-          text: `Дело создано: ${problemCase.title}\nКатегория: ${analysis.categoryName}\nСледующий шаг: ${problemCase.nextAction}`
-        };
-      }
-
-      const draft = createBotDraftFromMessage(text);
-      return {
-        ok: true,
-        chatId: message.chatId,
-        text: draft.reply,
-        suggestedActions: draft.suggestedActions
-      };
-    });
+    const result = await store.mutate((data) => handleTelegramUpdate(data, update));
 
     sendJson(res, 200, result);
     return true;
@@ -322,6 +291,15 @@ async function routeApi(req, res, store, options = {}) {
           message: problemCase.nextAction
         })
       );
+      appendAuditLog(data, {
+        actorId: user.id,
+        caseId: problemCase.id,
+        entityType: "case",
+        entityId: problemCase.id,
+        action: "case.created",
+        title: "Дело создано",
+        details: { categoryId: problemCase.categoryId, source: "web" }
+      });
       return { item: enrichCase(problemCase, data), analysis };
     });
 
@@ -337,6 +315,14 @@ async function routeApi(req, res, store, options = {}) {
     return true;
   }
 
+  const auditParams = matchPath(pathname, "/api/cases/:id/audit");
+  if (auditParams && method === "GET") {
+    const { data, user } = await requireUser(req, store);
+    getCaseForUser(data, user, auditParams.id);
+    sendJson(res, 200, { items: getAuditLogsForCase(data, auditParams.id) });
+    return true;
+  }
+
   if (caseParams && method === "PATCH") {
     const { user } = await requireUser(req, store);
     const body = await readJson(req);
@@ -345,6 +331,15 @@ async function routeApi(req, res, store, options = {}) {
       const problemCase = getCaseForUser(data, user, caseParams.id);
       const nextCase = updateCaseWithInput(problemCase, body);
       replaceCase(data, nextCase);
+      appendAuditLog(data, {
+        actorId: user.id,
+        caseId: nextCase.id,
+        entityType: "case",
+        entityId: nextCase.id,
+        action: "case.updated",
+        title: "Дело обновлено",
+        details: { changedFields: Object.keys(body) }
+      });
       return { item: enrichCase(nextCase, data) };
     });
 
@@ -370,6 +365,15 @@ async function routeApi(req, res, store, options = {}) {
           message: nextCase.nextAction
         })
       );
+      appendAuditLog(data, {
+        actorId: user.id,
+        caseId: nextCase.id,
+        entityType: "case",
+        entityId: nextCase.id,
+        action: `workflow.${body.action}`,
+        title: "Workflow-действие выполнено",
+        details: { action: body.action, status: nextCase.status }
+      });
       return { item: enrichCase(nextCase, data) };
     });
 
@@ -395,6 +399,15 @@ async function routeApi(req, res, store, options = {}) {
       });
       const { next, evidence } = addEvidenceToCase(problemCase, { ...body, id: evidenceId }, fileMeta);
       replaceCase(data, next);
+      appendAuditLog(data, {
+        actorId: user.id,
+        caseId: next.id,
+        entityType: "evidence",
+        entityId: evidence.id,
+        action: "evidence.uploaded",
+        title: "Доказательство загружено",
+        details: { evidenceType: evidence.evidenceType, hasFile: evidence.hasFile, fileHash: evidence.fileHash }
+      });
       return { item: evidence, case: enrichCase(next, data) };
     });
 
@@ -446,6 +459,15 @@ async function routeApi(req, res, store, options = {}) {
       data.generatedDocuments.push(document);
       const nextCase = attachGeneratedDocument(problemCase, document);
       replaceCase(data, nextCase);
+      appendAuditLog(data, {
+        actorId: user.id,
+        caseId: nextCase.id,
+        entityType: "document",
+        entityId: document.id,
+        action: "document.generated",
+        title: "Документ сформирован",
+        details: { templateId: template.id, title: document.title }
+      });
       return { item: document, case: enrichCase(nextCase, data) };
     });
 
@@ -524,7 +546,17 @@ async function routeApi(req, res, store, options = {}) {
       cases: data.cases.length,
       documents: data.generatedDocuments.length,
       evidence: data.cases.reduce((sum, item) => sum + (item.evidence?.length ?? 0), 0),
+      auditLogs: data.auditLogs.length,
       byStatus
+    });
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/admin/audit") {
+    const { data, user } = await requireUser(req, store);
+    requireAdmin(user);
+    sendJson(res, 200, {
+      items: [...data.auditLogs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 200)
     });
     return true;
   }
@@ -550,6 +582,14 @@ async function routeApi(req, res, store, options = {}) {
       template.title = body.title ?? template.title;
       template.body = body.body ?? template.body;
       template.isActive = body.isActive ?? template.isActive;
+      appendAuditLog(data, {
+        actorId: user.id,
+        entityType: "document_template",
+        entityId: template.id,
+        action: "template.updated",
+        title: "Шаблон документа обновлен",
+        details: { title: template.title, isActive: template.isActive }
+      });
       return { item: template };
     });
 

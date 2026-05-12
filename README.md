@@ -46,6 +46,8 @@ node --test server/tests/*.test.js
 - уведомления и дедлайны;
 - базовая админка шаблонов и статистики;
 - Telegram webhook skeleton: `/newcase`, `/mycases`, `/next`.
+- профиль пользователя с привязкой Telegram ID;
+- audit log системных действий по делу;
 
 ## Следующий шаг
 

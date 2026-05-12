@@ -21,7 +21,8 @@ export function createSeedData() {
         phone: "",
         telegramId: "",
         role: "admin",
-        createdAt: now
+        createdAt: now,
+        updatedAt: now
       },
       {
         id: demoId,
@@ -31,7 +32,8 @@ export function createSeedData() {
         phone: "",
         telegramId: "",
         role: "user",
-        createdAt: now
+        createdAt: now,
+        updatedAt: now
       }
     ],
     sessions: {},
@@ -83,6 +85,19 @@ export function createSeedData() {
         message: "Для претензии по возврату товара не хватает доказательств.",
         isRead: false,
         sendAt: now,
+        createdAt: now
+      }
+    ],
+    auditLogs: [
+      {
+        id: createId("audit"),
+        actorId: demoId,
+        caseId,
+        entityType: "case",
+        entityId: caseId,
+        action: "seed.created",
+        title: "Демо-дело создано",
+        details: { source: "seed" },
         createdAt: now
       }
     ],

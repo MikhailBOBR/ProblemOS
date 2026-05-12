@@ -6,6 +6,7 @@
   "description": "ProblemOS / Reshator MVP: web cabinet, API, cases, evidence, deadlines and document templates.",
   "scripts": {
     "start": "node server/src/index.js",
+    "bot": "node server/src/telegram/pollingRunner.js",
     "test": "node --test server/tests/*.test.js"
   },
   "engines": {

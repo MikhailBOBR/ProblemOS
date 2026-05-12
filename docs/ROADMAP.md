@@ -13,9 +13,11 @@
 - [x] Безопасное файловое хранилище доказательств.
 - [ ] Настоящие DOCX/PDF экспорты.
 - [x] Telegram webhook skeleton с командами `/start`, `/newcase`, `/mycases`, `/next`.
+- [x] Профиль пользователя с привязкой Telegram ID.
 - [ ] Email/Telegram уведомления о дедлайнах.
-- [ ] Audit log для всех действий по делу.
+- [x] Audit log для ключевых действий по делу.
 - [x] Workflow API для действий по делу.
+- [x] Telegram polling runner через `TELEGRAM_BOT_TOKEN`.
 
 ## Phase 2. Product Depth
 

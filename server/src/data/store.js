@@ -2,6 +2,35 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createSeedData } from "./seed.js";
 
+function normalizeData(data) {
+  data.version = data.version ?? 1;
+  data.users = data.users ?? [];
+  data.sessions = data.sessions ?? {};
+  data.categories = data.categories ?? [];
+  data.cases = data.cases ?? [];
+  data.documentTemplates = data.documentTemplates ?? [];
+  data.generatedDocuments = data.generatedDocuments ?? [];
+  data.notifications = data.notifications ?? [];
+  data.botSessions = data.botSessions ?? [];
+  data.auditLogs = data.auditLogs ?? [];
+
+  for (const user of data.users) {
+    user.phone = user.phone ?? "";
+    user.telegramId = user.telegramId ?? "";
+    user.role = user.role ?? "user";
+    user.updatedAt = user.updatedAt ?? user.createdAt ?? new Date().toISOString();
+  }
+
+  for (const problemCase of data.cases) {
+    problemCase.evidence = problemCase.evidence ?? [];
+    problemCase.documents = problemCase.documents ?? [];
+    problemCase.timeline = problemCase.timeline ?? [];
+    problemCase.steps = problemCase.steps ?? [];
+  }
+
+  return data;
+}
+
 export class JsonStore {
   constructor(dataFile = join(process.cwd(), "server", "data", "problem-os.json")) {
     this.dataFile = dataFile;
@@ -18,12 +47,12 @@ export class JsonStore {
 
     try {
       const raw = await readFile(this.dataFile, "utf8");
-      this.data = JSON.parse(raw);
+      this.data = normalizeData(JSON.parse(raw));
     } catch (error) {
       if (error.code !== "ENOENT") {
         throw error;
       }
-      this.data = createSeedData();
+      this.data = normalizeData(createSeedData());
       await this.save();
     }
 

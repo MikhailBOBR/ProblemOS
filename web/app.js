@@ -139,6 +139,7 @@ function render() {
           ${navButton("cases", "Мои дела")}
           ${navButton("new", "Создать дело")}
           ${navButton("documents", "Документы")}
+          ${navButton("profile", "Профиль")}
           ${state.user.role === "admin" ? navButton("admin", "Админка") : ""}
         </nav>
         <div class="sidebar-footer">
@@ -165,6 +166,7 @@ function renderTopbar() {
     cases: ["Мои дела", "Все бытовые проблемы в виде управляемых дел."],
     new: ["Создать дело", "Опишите ситуацию обычными словами, система соберет структуру."],
     documents: ["Документы", "Сформированные претензии, заявления и пакеты дел."],
+    profile: ["Профиль", "Контакты, Telegram и настройки уведомлений."],
     admin: ["Админка", "Шаблоны, статистика и операционное управление."]
   };
   const [title, note] = titles[state.view] || titles.dashboard;
@@ -188,6 +190,7 @@ function renderView() {
   if (state.view === "cases") return renderCases();
   if (state.view === "new") return renderNewCase();
   if (state.view === "documents") return renderDocuments();
+  if (state.view === "profile") return renderProfile();
   if (state.view === "admin") return renderAdmin();
   return renderDashboard();
 }
@@ -494,6 +497,21 @@ function renderCaseDetails(item) {
             `).join("")}
           </div>
         </div>
+        <div class="panel">
+          <h2 class="section-title">Audit log</h2>
+          <div class="timeline">
+            ${
+              item.auditLog?.length
+                ? item.auditLog.slice(0, 10).map((entry) => `
+                  <div class="line-item">
+                    <div class="line-title">${formatDate(entry.createdAt)} - ${escapeHtml(entry.title)}</div>
+                    <div class="line-subtitle">${escapeHtml(entry.action)}</div>
+                  </div>
+                `).join("")
+                : `<div class="hint">Системных событий пока нет.</div>`
+            }
+          </div>
+        </div>
       </aside>
     </section>
   `;
@@ -583,6 +601,54 @@ function renderDocuments() {
   `;
 }
 
+function renderProfile() {
+  return `
+    <section class="split">
+      <div class="panel">
+        <h2 class="section-title">Данные аккаунта</h2>
+        <form class="form" id="profile-form">
+          <div class="field">
+            <label>ФИО</label>
+            <input name="fullName" value="${escapeHtml(state.user.fullName || "")}" />
+          </div>
+          <div class="field">
+            <label>Email</label>
+            <input value="${escapeHtml(state.user.email)}" disabled />
+          </div>
+          <div class="grid cols-2">
+            <div class="field">
+              <label>Телефон</label>
+              <input name="phone" value="${escapeHtml(state.user.phone || "")}" placeholder="+7 900 000-00-00" />
+            </div>
+            <div class="field">
+              <label>Telegram ID</label>
+              <input name="telegramId" value="${escapeHtml(state.user.telegramId || "")}" placeholder="Например: 123456789" />
+            </div>
+          </div>
+          <button class="btn primary" type="submit">Сохранить профиль</button>
+          <div class="hint danger-text" id="profile-error"></div>
+        </form>
+      </div>
+      <aside class="panel">
+        <h2 class="section-title">Telegram</h2>
+        <div class="notice">
+          После привязки Telegram ID бот сможет создавать дела командой /newcase, показывать /mycases и отвечать на /next.
+        </div>
+        <div class="timeline" style="margin-top:14px">
+          <div class="line-item ${state.user.telegramId ? "done" : "active"}">
+            <div class="line-title">${state.user.telegramId ? "Telegram привязан" : "Telegram не привязан"}</div>
+            <div class="line-subtitle">${escapeHtml(state.user.telegramId || "Укажите числовой ID из Telegram.")}</div>
+          </div>
+          <div class="line-item">
+            <div class="line-title">Polling runner</div>
+            <div class="line-subtitle">Запуск: TELEGRAM_BOT_TOKEN=... node server/src/telegram/pollingRunner.js</div>
+          </div>
+        </div>
+      </aside>
+    </section>
+  `;
+}
+
 function renderAdmin() {
   if (state.user.role !== "admin") {
     return `<div class="panel">Нет доступа.</div>`;
@@ -591,10 +657,11 @@ function renderAdmin() {
   const stats = state.adminStats || {};
 
   return `
-    <section class="grid cols-3">
+    <section class="grid cols-4">
       ${metric("Пользователи", stats.users || 0)}
       ${metric("Дела", stats.cases || 0)}
       ${metric("Документы", stats.documents || 0)}
+      ${metric("Audit log", stats.auditLogs || 0)}
     </section>
     <section class="panel" style="margin-top:16px">
       <h2 class="section-title">Шаблоны документов</h2>
@@ -615,9 +682,16 @@ function renderAdmin() {
               </div>
             </div>
             <div class="field">
+              <label>Переменные</label>
+              <div class="chip-list">
+                ${(template.variables || []).map((variable) => `<span class="chip">{{${escapeHtml(variable)}}}</span>`).join("") || `<span class="hint">Переменные не описаны</span>`}
+              </div>
+            </div>
+            <div class="field">
               <label>Текст шаблона</label>
               <textarea name="body">${escapeHtml(template.body)}</textarea>
             </div>
+            <div class="notice">Пример: {{full_name}} будет заменено на ФИО пользователя, а данные дела берутся из фактов карточки.</div>
             <button class="btn primary" type="submit">Сохранить шаблон</button>
           </form>
         `).join("")}
@@ -672,6 +746,7 @@ function bindViewEvents() {
     render();
   });
   document.querySelector("#evidence-form")?.addEventListener("submit", uploadEvidence);
+  document.querySelector("#profile-form")?.addEventListener("submit", saveProfile);
 
   document.querySelectorAll("[data-generate-doc]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -821,6 +896,26 @@ async function saveTemplate(event) {
     })
   });
   await refreshAll();
+}
+
+async function saveProfile(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  try {
+    const payload = await api("/api/me/profile", {
+      method: "PATCH",
+      body: JSON.stringify({
+        fullName: form.get("fullName"),
+        phone: form.get("phone"),
+        telegramId: form.get("telegramId")
+      })
+    });
+    state.user = payload.user;
+    localStorage.setItem("problemos.user", JSON.stringify(state.user));
+    await refreshAll();
+  } catch (error) {
+    document.querySelector("#profile-error").textContent = error.message;
+  }
 }
 
 async function downloadWithToken(url) {

@@ -51,6 +51,19 @@ test("core user flow: register, create case, evidence, document, package", async
   assert.equal(registered.response.status, 201);
   const token = registered.body.token;
 
+  const profile = await api(baseUrl, "/api/me/profile", {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      fullName: "Иван Петров",
+      phone: "+79000000000",
+      telegramId: "555001"
+    })
+  });
+
+  assert.equal(profile.response.status, 200);
+  assert.equal(profile.body.user.telegramId, "555001");
+
   const categories = await api(baseUrl, "/api/categories");
   assert.equal(categories.response.status, 200);
   assert.ok(categories.body.items.length >= 3);
@@ -135,6 +148,13 @@ test("core user flow: register, create case, evidence, document, package", async
 
   assert.equal(list.body.items.length, 1);
   assert.equal(list.body.items[0].documents.length, 1);
+  assert.ok(list.body.items[0].auditLog.length >= 4);
+
+  const audit = await api(baseUrl, `/api/cases/${caseId}/audit`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(audit.response.status, 200);
+  assert.ok(audit.body.items.some((entry) => entry.action === "document.generated"));
 
   const packageResponse = await fetch(`${baseUrl}/api/cases/${caseId}/package`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -213,4 +233,10 @@ test("telegram link and webhook can create a case", async (t) => {
 
   assert.equal(next.response.status, 200);
   assert.ok(next.body.text.includes("Дело:"));
+
+  const audit = await api(baseUrl, `/api/cases/${createdByBot.body.caseId}/audit`, {
+    headers: { Authorization: `Bearer ${registered.body.token}` }
+  });
+  assert.equal(audit.response.status, 200);
+  assert.ok(audit.body.items.some((entry) => entry.action === "case.created.telegram"));
 });
