@@ -4,9 +4,9 @@
 
 ## Текущий этап
 
-Этап 2.3. Документы, пакеты дела и расширенный backend API.
+Этап 2.4. Уведомления, фоновые задачи и production-hardening.
 
-Фокус: документы должны выгружаться в нескольких форматах, дело должно скачиваться архивом вместе с доказательствами, а backend должен поддерживать рабочие процессы админа/эксперта.
+Фокус: дедлайны должны превращаться в постоянные уведомления, админ должен видеть состояние системы, а проект должен быть готов к запуску в контейнере.
 
 ## Уже сделано
 
@@ -15,38 +15,41 @@
 - Регистрация, вход, роли, профиль, привязка Telegram ID.
 - Дела, статусы, workflow actions, доказательства, документы, уведомления.
 - Файловое хранилище доказательств в `server/data/uploads`.
-- SHA-256, MIME-проверки, лимиты, безопасные имена файлов.
 - Audit log как отдельная коллекция `auditLogs`.
 - Telegram webhook и polling runner через `TELEGRAM_BOT_TOKEN`.
-- PostgreSQL/Django-compatible схема в `docs/DATA_SCHEMA.md`.
+- DOCX/PDF/RTF export.
+- ZIP-пакет дела с документами, audit log и файлами доказательств.
+- Проверка полноты дела.
+- Комментарии по делу.
+- Админские списки пользователей и дел.
 
 ## Сделано в текущем шаге
 
-- Добавлен ZIP writer без внешних зависимостей.
-- Добавлен DOCX exporter без внешних зависимостей.
-- Добавлен простой PDF exporter.
-- `/api/documents/:id/download?format=rtf|docx|pdf`.
-- `/api/cases/:id/package?format=zip` собирает архив дела.
-- ZIP-пакет включает `summary.md`, timeline, audit log, индекс документов, индекс доказательств, RTF-документы и реальные файлы доказательств.
-- Добавлен `completenessService`.
-- `/api/cases/:id/completeness` показывает готовность дела, недостающие факты, доказательства и доступные шаблоны.
-- Карточка дела показывает готовность, недостающие данные, выбор шаблона и скачивание RTF/DOCX/PDF.
-- Добавлены комментарии по делу: `/api/cases/:id/comments`.
-- Комментарии отображаются в карточке дела и пишутся в audit log.
-- Добавлены фильтры `/api/cases?status=&categoryId=&priority=&q=`.
-- Добавлены админские списки `/api/admin/users` и `/api/admin/cases`.
-- Расширены тесты на DOCX/PDF/ZIP, completeness, комментарии, фильтры и админские endpoints.
+- Добавлен `schedulerService`: дедлайны создают постоянные уведомления без дублей.
+- `/api/notifications` запускает пользовательский deadline scan и возвращает `unread`.
+- Добавлено массовое прочтение `/api/notifications/read-all`.
+- Добавлен Telegram delivery service с dry-run и реальной отправкой через `TELEGRAM_BOT_TOKEN`.
+- Добавлен `/api/admin/scheduler/run`.
+- Добавлен `/api/admin/notifications/dispatch`.
+- Добавлен `/api/diagnostics` для админа.
+- Добавлен `/api/admin/export` для JSON export.
+- Добавлен `/api/admin/backup` для backup файла в `server/data/backups`.
+- Добавлен in-memory rate limiter для API/auth.
+- Добавлен standalone runner `server/src/jobs/deadlineScheduler.js`.
+- Добавлены `Dockerfile`, `docker-compose.yml`, `.dockerignore`.
+- Web-интерфейс получил read/unread уведомлений и админские операции: scheduler, Telegram dry-run, backup, export, diagnostics.
+- Расширены тесты: scheduler, notification read-all, Telegram dispatch dry-run, diagnostics, export, backup, rate limit.
 
 ## Ближайший следующий шаг
 
-Этап 2.4. Уведомления, фоновые задачи и production-hardening:
+Этап 2.5. Production polish и расширение ролей:
 
-1. Добавить scheduler для дедлайнов: генерация уведомлений по срокам.
-2. Добавить read/unread UX и массовое прочтение уведомлений.
-3. Добавить Telegram-отправку уведомлений по дедлайнам.
-4. Добавить rate limit для auth/API.
-5. Добавить backup/export JSON storage и health diagnostics.
-6. Подготовить Dockerfile/docker-compose.
+1. Добавить RBAC permissions helper вместо разрозненных проверок.
+2. Добавить роли `expert` и экспертные рекомендации.
+3. Добавить версионирование шаблонов документов.
+4. Добавить редактор workflow/playbook в админке.
+5. Добавить OpenAPI-like описание endpoints.
+6. Добавить миграционный слой JSON -> PostgreSQL schema draft.
 
 ## Принцип развития
 

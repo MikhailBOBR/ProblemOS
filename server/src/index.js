@@ -13,7 +13,11 @@ import { evaluateCaseCompleteness } from "./services/completenessService.js";
 import { exportDocument } from "./services/documentExportService.js";
 import { openEvidenceFile, persistEvidenceFile, sanitizeFileName } from "./services/fileStorageService.js";
 import { appendAuditLog, getAuditLogsForCase } from "./services/auditLogService.js";
-import { buildDeadlineNotifications, createNotification } from "./services/notificationService.js";
+import { createNotification } from "./services/notificationService.js";
+import { buildDiagnostics } from "./services/diagnosticsService.js";
+import { createRateLimiter } from "./services/rateLimitService.js";
+import { runDeadlineScheduler } from "./services/schedulerService.js";
+import { dispatchTelegramNotifications } from "./services/telegramDeliveryService.js";
 import { handleTelegramUpdate } from "./services/telegramService.js";
 import { performCaseAction } from "./services/workflowService.js";
 import { createBotDraftFromMessage } from "./telegram/botAdapter.js";
@@ -25,6 +29,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_STATIC_ROOT = join(__dirname, "..", "..", "web");
 const DEFAULT_UPLOAD_ROOT = join(process.cwd(), "server", "data", "uploads");
+const DEFAULT_BACKUP_ROOT = join(process.cwd(), "server", "data", "backups");
 
 function findUserByToken(data, token) {
   if (!token || !data.sessions[token]) {
@@ -137,9 +142,18 @@ async function routeApi(req, res, store, options = {}) {
   const { pathname } = url;
   const method = req.method ?? "GET";
   const uploadRoot = options.uploadRoot ?? DEFAULT_UPLOAD_ROOT;
+  const backupRoot = options.backupRoot ?? DEFAULT_BACKUP_ROOT;
+  const startedAt = options.startedAt ?? new Date().toISOString();
 
   if (method === "GET" && pathname === "/api/health") {
-    sendJson(res, 200, { ok: true, service: "ProblemOS", time: new Date().toISOString() });
+    sendJson(res, 200, { ok: true, service: "ProblemOS", time: new Date().toISOString(), uptimeSeconds: Math.round(process.uptime()) });
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/diagnostics") {
+    const { data, user } = await requireUser(req, store);
+    requireAdmin(user);
+    sendJson(res, 200, await buildDiagnostics({ data, dataFile: store.getDataFile(), uploadRoot, startedAt }));
     return true;
   }
 
@@ -592,14 +606,40 @@ async function routeApi(req, res, store, options = {}) {
   }
 
   if (method === "GET" && pathname === "/api/notifications") {
-    const { data, user } = await requireUser(req, store);
-    const dynamic = data.cases
-      .filter((item) => item.userId === user.id)
-      .flatMap((item) => buildDeadlineNotifications(item));
-    const items = [...data.notifications, ...dynamic]
-      .filter((item) => item.userId === user.id)
-      .sort((a, b) => new Date(b.sendAt).getTime() - new Date(a.sendAt).getTime());
-    sendJson(res, 200, { items });
+    const { user } = await requireUser(req, store);
+    const result = await store.mutate((data) => {
+      runDeadlineScheduler(data, { actorId: "system", userId: user.id });
+      const items = data.notifications
+        .filter((item) => item.userId === user.id)
+        .sort((a, b) => new Date(b.sendAt).getTime() - new Date(a.sendAt).getTime());
+      return { items, unread: items.filter((item) => !item.isRead).length };
+    });
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (method === "PATCH" && pathname === "/api/notifications/read-all") {
+    const { user } = await requireUser(req, store);
+    const result = await store.mutate((data) => {
+      const now = new Date().toISOString();
+      let updated = 0;
+      for (const notification of data.notifications) {
+        if (notification.userId === user.id && !notification.isRead) {
+          notification.isRead = true;
+          notification.readAt = now;
+          updated += 1;
+        }
+      }
+      appendAuditLog(data, {
+        actorId: user.id,
+        entityType: "notification",
+        action: "notification.read_all",
+        title: "Все уведомления отмечены прочитанными",
+        details: { updated }
+      });
+      return { updated };
+    });
+    sendJson(res, 200, result);
     return true;
   }
 
@@ -613,6 +653,7 @@ async function routeApi(req, res, store, options = {}) {
         throw createHttpError(404, "Уведомление не найдено");
       }
       notification.isRead = true;
+      notification.readAt = new Date().toISOString();
       return { item: notification };
     });
 
@@ -637,6 +678,58 @@ async function routeApi(req, res, store, options = {}) {
       auditLogs: data.auditLogs.length,
       byStatus
     });
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/admin/scheduler/run") {
+    const { user } = await requireUser(req, store);
+    requireAdmin(user);
+    const result = await store.mutate((data) => runDeadlineScheduler(data, { actorId: user.id }));
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/admin/notifications/dispatch") {
+    const { user } = await requireUser(req, store);
+    requireAdmin(user);
+    const body = await readJson(req);
+    const result = await store.mutate((data) =>
+      dispatchTelegramNotifications(data, {
+        actorId: user.id,
+        dryRun: body.dryRun !== false,
+        token: body.token || process.env.TELEGRAM_BOT_TOKEN
+      })
+    );
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/admin/export") {
+    const { user } = await requireUser(req, store);
+    requireAdmin(user);
+    const content = await store.exportJson();
+    sendText(res, 200, content, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="problemos-export-${new Date().toISOString().slice(0, 10)}.json"`
+    });
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/admin/backup") {
+    const { user } = await requireUser(req, store);
+    requireAdmin(user);
+    const backupFile = await store.backup(backupRoot);
+    await store.mutate((data) => {
+      appendAuditLog(data, {
+        actorId: user.id,
+        entityType: "backup",
+        action: "backup.created",
+        title: "Backup создан",
+        details: { backupFile }
+      });
+      return null;
+    });
+    sendJson(res, 201, { backupFile });
     return true;
   }
 
@@ -723,12 +816,25 @@ export function createProblemOsServer(options = {}) {
   const store = new JsonStore(options.dataFile);
   const staticRoot = options.staticRoot ?? DEFAULT_STATIC_ROOT;
   const uploadRoot = options.uploadRoot ?? DEFAULT_UPLOAD_ROOT;
+  const backupRoot = options.backupRoot ?? DEFAULT_BACKUP_ROOT;
+  const startedAt = new Date().toISOString();
+  const rateLimiter = createRateLimiter(options.rateLimit ?? {});
 
   return createServer(async (req, res) => {
     try {
       const url = parseRequestUrl(req);
       if (url.pathname.startsWith("/api/")) {
-        await routeApi(req, res, store, { uploadRoot });
+        const limited = options.disableRateLimit ? null : rateLimiter(req, url);
+        if (limited) {
+          res.writeHead(429, {
+            "Content-Type": "application/json; charset=utf-8",
+            "Retry-After": String(limited.retryAfter)
+          });
+          res.end(JSON.stringify({ error: "Слишком много запросов", retryAfter: limited.retryAfter }));
+          return;
+        }
+
+        await routeApi(req, res, store, { uploadRoot, backupRoot, startedAt });
         return;
       }
 
@@ -745,7 +851,8 @@ export async function startServer() {
   const server = createProblemOsServer({
     dataFile: process.env.DATA_FILE,
     staticRoot: process.env.STATIC_ROOT,
-    uploadRoot: process.env.UPLOAD_ROOT
+    uploadRoot: process.env.UPLOAD_ROOT,
+    backupRoot: process.env.BACKUP_ROOT
   });
 
   server.listen(port, host, () => {

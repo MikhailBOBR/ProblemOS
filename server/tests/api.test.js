@@ -6,12 +6,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createProblemOsServer } from "../src/index.js";
 
-async function startTestServer() {
+async function startTestServer(options = {}) {
   const dir = await mkdtemp(join(tmpdir(), "problemos-"));
   const server = createProblemOsServer({
     dataFile: join(dir, "data.json"),
     uploadRoot: join(dir, "uploads"),
-    staticRoot: join(process.cwd(), "web")
+    backupRoot: join(dir, "backups"),
+    staticRoot: join(process.cwd(), "web"),
+    ...options
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -164,6 +166,31 @@ test("core user flow: register, create case, evidence, document, package", async
   assert.equal(sent.response.status, 200);
   assert.equal(sent.body.item.status, "waiting_response");
 
+  const pastDeadline = await api(baseUrl, `/api/cases/${caseId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      status: "waiting_response",
+      deadlineAt: "2026-01-01T00:00:00.000Z"
+    })
+  });
+  assert.equal(pastDeadline.response.status, 200);
+
+  const notifications = await api(baseUrl, "/api/notifications", {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(notifications.response.status, 200);
+  assert.ok(notifications.body.items.some((item) => item.type === "deadline_missed"));
+  assert.ok(notifications.body.unread >= 1);
+
+  const readAll = await api(baseUrl, "/api/notifications/read-all", {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({})
+  });
+  assert.equal(readAll.response.status, 200);
+  assert.ok(readAll.body.updated >= 1);
+
   const escalation = await api(baseUrl, `/api/cases/${caseId}/actions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -235,6 +262,42 @@ test("core user flow: register, create case, evidence, document, package", async
   });
   assert.equal(adminCases.response.status, 200);
   assert.equal(adminCases.body.total, 1);
+
+  const diagnostics = await api(baseUrl, "/api/diagnostics", {
+    headers: { Authorization: `Bearer ${admin.body.token}` }
+  });
+  assert.equal(diagnostics.response.status, 200);
+  assert.ok(diagnostics.body.counts.cases >= 1);
+
+  const scheduler = await api(baseUrl, "/api/admin/scheduler/run", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+    body: JSON.stringify({})
+  });
+  assert.equal(scheduler.response.status, 200);
+  assert.ok(scheduler.body.scannedCases >= 1);
+
+  const dispatch = await api(baseUrl, "/api/admin/notifications/dispatch", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+    body: JSON.stringify({ dryRun: true })
+  });
+  assert.equal(dispatch.response.status, 200);
+  assert.ok(dispatch.body.attempted.length >= 1);
+
+  const exported = await fetch(`${baseUrl}/api/admin/export`, {
+    headers: { Authorization: `Bearer ${admin.body.token}` }
+  });
+  assert.equal(exported.status, 200);
+  assert.ok((await exported.text()).includes("user@example.test"));
+
+  const backup = await api(baseUrl, "/api/admin/backup", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+    body: JSON.stringify({})
+  });
+  assert.equal(backup.response.status, 201);
+  assert.ok(backup.body.backupFile.includes("problem-os-"));
 });
 
 test("users cannot read other users cases", async (t) => {
@@ -313,4 +376,15 @@ test("telegram link and webhook can create a case", async (t) => {
   });
   assert.equal(audit.response.status, 200);
   assert.ok(audit.body.items.some((entry) => entry.action === "case.created.telegram"));
+});
+
+test("rate limiter can reject excessive api requests", async (t) => {
+  const { server, baseUrl } = await startTestServer({
+    rateLimit: { windowMs: 60_000, apiLimit: 2, authLimit: 2 }
+  });
+  t.after(() => server.close());
+
+  assert.equal((await fetch(`${baseUrl}/api/categories`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/categories`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/categories`)).status, 429);
 });

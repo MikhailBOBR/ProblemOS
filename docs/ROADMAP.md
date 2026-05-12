@@ -22,6 +22,12 @@
 - [x] Комментарии по делу.
 - [x] Админские списки пользователей и дел.
 - [x] Проверка полноты дела перед документом.
+- [x] Deadline scheduler.
+- [x] Read/unread уведомления.
+- [x] Telegram dispatch dry-run/real-send path.
+- [x] Diagnostics, JSON export и backup.
+- [x] Dockerfile/docker-compose.
+- [x] Rate limit для API/auth.
 
 ## Phase 2. Product Depth
 
@@ -43,9 +49,9 @@
 ## Phase 4. Production Hardening
 
 - [ ] RBAC permissions.
-- [ ] Rate limits.
-- [ ] Backups.
+- [x] Rate limits.
+- [x] Backups.
 - [ ] Observability.
 - [ ] CI tests.
-- [ ] Docker compose.
+- [x] Docker compose.
 - [ ] Security review.

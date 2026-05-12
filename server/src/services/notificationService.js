@@ -1,6 +1,16 @@
 import { createId, nowIso } from "../utils/id.js";
 
-export function createNotification({ userId, caseId, type, title, message, sendAt = nowIso() }) {
+export function createNotification({
+  userId,
+  caseId,
+  type,
+  title,
+  message,
+  sendAt = nowIso(),
+  channel = "in_app",
+  dedupeKey = "",
+  meta = {}
+}) {
   return {
     id: createId("notification"),
     userId,
@@ -9,6 +19,13 @@ export function createNotification({ userId, caseId, type, title, message, sendA
     title,
     message,
     isRead: false,
+    readAt: null,
+    channel,
+    dedupeKey,
+    meta,
+    telegramStatus: "pending",
+    telegramDeliveredAt: null,
+    telegramError: "",
     sendAt,
     createdAt: nowIso()
   };

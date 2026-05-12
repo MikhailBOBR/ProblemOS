@@ -29,6 +29,17 @@ function normalizeData(data) {
     problemCase.steps = problemCase.steps ?? [];
   }
 
+  for (const notification of data.notifications) {
+    notification.isRead = Boolean(notification.isRead);
+    notification.readAt = notification.readAt ?? null;
+    notification.channel = notification.channel ?? "in_app";
+    notification.dedupeKey = notification.dedupeKey ?? "";
+    notification.meta = notification.meta ?? {};
+    notification.telegramStatus = notification.telegramStatus ?? "pending";
+    notification.telegramDeliveredAt = notification.telegramDeliveredAt ?? null;
+    notification.telegramError = notification.telegramError ?? "";
+  }
+
   return data;
 }
 
@@ -37,6 +48,10 @@ export class JsonStore {
     this.dataFile = dataFile;
     this.data = null;
     this.queue = Promise.resolve();
+  }
+
+  getDataFile() {
+    return this.dataFile;
   }
 
   async load() {
@@ -65,6 +80,20 @@ export class JsonStore {
     const tmpFile = `${this.dataFile}.tmp`;
     await writeFile(tmpFile, JSON.stringify(this.data, null, 2), "utf8");
     await rename(tmpFile, this.dataFile);
+  }
+
+  async exportJson() {
+    const data = await this.load();
+    return JSON.stringify(data, null, 2);
+  }
+
+  async backup(backupRoot = join(dirname(this.dataFile), "backups")) {
+    const data = await this.load();
+    await mkdir(backupRoot, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupFile = join(backupRoot, `problem-os-${stamp}.json`);
+    await writeFile(backupFile, JSON.stringify(data, null, 2), "utf8");
+    return backupFile;
   }
 
   async read() {

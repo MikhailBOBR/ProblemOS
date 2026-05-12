@@ -13,6 +13,8 @@ const state = {
   authMode: "login",
   newCaseDraft: { description: "", categoryId: "", facts: {} },
   adminStats: null,
+  adminDiagnostics: null,
+  adminMessage: "",
   templates: []
 };
 
@@ -99,6 +101,7 @@ async function loadNotifications() {
 async function loadAdmin() {
   if (state.user?.role !== "admin") return;
   state.adminStats = await api("/api/admin/stats");
+  state.adminDiagnostics = await api("/api/diagnostics");
   const templates = await api("/api/admin/templates");
   state.templates = templates.items;
 }
@@ -290,7 +293,10 @@ function renderDashboard() {
         </div>
       </div>
       <div class="panel">
-        <h2 class="section-title">Уведомления</h2>
+        <div class="case-head">
+          <h2 class="section-title">Уведомления</h2>
+          <button class="btn ghost" data-action="read-all-notifications">Прочитать все</button>
+        </div>
         <div class="timeline">
           ${
             state.notifications.length
@@ -298,6 +304,7 @@ function renderDashboard() {
                 <div class="line-item ${item.isRead ? "" : "active"}">
                   <div class="line-title">${escapeHtml(item.title)}</div>
                   <div class="line-subtitle">${escapeHtml(item.message)}</div>
+                  ${item.isRead ? "" : `<button class="btn ghost" data-read-notification="${item.id}" style="margin-top:8px">Прочитано</button>`}
                 </div>
               `).join("")
               : `<div class="hint">Уведомлений пока нет.</div>`
@@ -713,6 +720,7 @@ function renderAdmin() {
   }
 
   const stats = state.adminStats || {};
+  const diagnostics = state.adminDiagnostics || {};
 
   return `
     <section class="grid cols-4">
@@ -720,6 +728,31 @@ function renderAdmin() {
       ${metric("Дела", stats.cases || 0)}
       ${metric("Документы", stats.documents || 0)}
       ${metric("Audit log", stats.auditLogs || 0)}
+    </section>
+    <section class="split" style="margin-top:16px">
+      <div class="panel">
+        <h2 class="section-title">Операции</h2>
+        <div class="toolbar">
+          <button class="btn ghost" data-admin-action="run-scheduler">Запустить scheduler</button>
+          <button class="btn ghost" data-admin-action="dispatch-telegram">Telegram dry-run</button>
+          <button class="btn ghost" data-admin-action="backup">Создать backup</button>
+          <button class="btn ghost" data-admin-export="true">Export JSON</button>
+        </div>
+        <div class="notice" style="margin-top:14px">${escapeHtml(state.adminMessage || "Готово к операционным действиям.")}</div>
+      </div>
+      <div class="panel">
+        <h2 class="section-title">Diagnostics</h2>
+        <div class="timeline">
+          <div class="line-item">
+            <div class="line-title">Uptime</div>
+            <div class="line-subtitle">${escapeHtml(String(diagnostics.uptimeSeconds ?? 0))} sec, Node ${escapeHtml(diagnostics.node || "")}</div>
+          </div>
+          <div class="line-item">
+            <div class="line-title">Storage</div>
+            <div class="line-subtitle">${escapeHtml(String(diagnostics.storage?.dataFileBytes ?? 0))} bytes, uploads: ${escapeHtml(String(diagnostics.storage?.uploadRootExists ?? false))}</div>
+          </div>
+        </div>
+      </div>
     </section>
     <section class="panel" style="margin-top:16px">
       <h2 class="section-title">Шаблоны документов</h2>
@@ -842,10 +875,46 @@ function bindViewEvents() {
   document.querySelectorAll("[data-template-id]").forEach((form) => {
     form.addEventListener("submit", saveTemplate);
   });
+
+  document.querySelector("[data-action='read-all-notifications']")?.addEventListener("click", markAllNotificationsRead);
+  document.querySelectorAll("[data-read-notification]").forEach((button) => {
+    button.addEventListener("click", () => markNotificationRead(button.dataset.readNotification));
+  });
+  document.querySelectorAll("[data-admin-action]").forEach((button) => {
+    button.addEventListener("click", () => runAdminAction(button.dataset.adminAction));
+  });
+  document.querySelector("[data-admin-export]")?.addEventListener("click", () => downloadWithToken("/api/admin/export"));
 }
 
 async function refreshAll() {
   await Promise.all([loadCases(), loadNotifications(), loadAdmin()]);
+  render();
+}
+
+async function markNotificationRead(id) {
+  await api(`/api/notifications/${id}/read`, { method: "PATCH" });
+  await refreshAll();
+}
+
+async function markAllNotificationsRead() {
+  await api("/api/notifications/read-all", { method: "PATCH" });
+  await refreshAll();
+}
+
+async function runAdminAction(action) {
+  if (action === "run-scheduler") {
+    const result = await api("/api/admin/scheduler/run", { method: "POST", body: JSON.stringify({}) });
+    state.adminMessage = `Scheduler: создано ${result.created.length}, проверено ${result.scannedCases}.`;
+  }
+  if (action === "dispatch-telegram") {
+    const result = await api("/api/admin/notifications/dispatch", { method: "POST", body: JSON.stringify({ dryRun: true }) });
+    state.adminMessage = `Telegram dry-run: кандидатов ${result.attempted.length}, пропущено ${result.skipped.length}.`;
+  }
+  if (action === "backup") {
+    const result = await api("/api/admin/backup", { method: "POST", body: JSON.stringify({}) });
+    state.adminMessage = `Backup создан: ${result.backupFile}`;
+  }
+  await loadAdmin();
   render();
 }
 

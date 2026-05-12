@@ -1,0 +1,31 @@
+services:
+  problemos:
+    build: .
+    container_name: problemos
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      DATA_FILE: /app/server/data/problem-os.json
+      UPLOAD_ROOT: /app/server/data/uploads
+      BACKUP_ROOT: /app/server/data/backups
+    ports:
+      - "8080:8080"
+    volumes:
+      - problemos-data:/app/server/data
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    container_name: problemos-scheduler
+    command: ["node", "server/src/jobs/deadlineScheduler.js"]
+    environment:
+      DATA_FILE: /app/server/data/problem-os.json
+      SCHEDULER_INTERVAL_MS: 900000
+    volumes:
+      - problemos-data:/app/server/data
+    depends_on:
+      - problemos
+    restart: unless-stopped
+
+volumes:
+  problemos-data:

@@ -52,6 +52,27 @@ node --test server/tests/*.test.js
 - Telegram webhook skeleton: `/newcase`, `/mycases`, `/next`.
 - профиль пользователя с привязкой Telegram ID;
 - audit log системных действий по делу;
+- deadline scheduler и read/unread уведомления;
+- Telegram dispatch для дедлайнов через `TELEGRAM_BOT_TOKEN`;
+- diagnostics, JSON export, backup;
+- Dockerfile и docker-compose.
+
+## Операционные команды
+
+```powershell
+node server/src/jobs/deadlineScheduler.js
+```
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN="..."
+node server/src/telegram/pollingRunner.js
+```
+
+Docker:
+
+```powershell
+docker compose up --build
+```
 
 ## Следующий шаг
 

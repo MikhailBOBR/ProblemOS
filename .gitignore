@@ -1,6 +1,8 @@
 node_modules/
 server/data/*.json
 server/data/*.log
+server/data/uploads/
+server/data/backups/
 *.tmp
 .env
 .DS_Store

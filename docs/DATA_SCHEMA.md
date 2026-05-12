@@ -100,6 +100,13 @@
 | title | varchar | заголовок |
 | message | text | текст |
 | is_read | boolean | прочитано |
+| read_at | timestamptz nullable | дата прочтения |
+| channel | varchar | `in_app`, позже `telegram/email` |
+| dedupe_key | varchar nullable | защита от дублей scheduler |
+| meta | jsonb | дополнительные данные |
+| telegram_status | varchar | `pending`, `sent`, `failed` |
+| telegram_delivered_at | timestamptz nullable | отправка в Telegram |
+| telegram_error | text nullable | ошибка отправки |
 | send_at | timestamptz | когда показывать/отправлять |
 | created_at | timestamptz | дата создания |
 
