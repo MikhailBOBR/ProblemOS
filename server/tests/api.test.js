@@ -256,6 +256,62 @@ test("core user flow: register, create case, evidence, document, package", async
   });
   assert.equal(adminUsers.response.status, 200);
   assert.ok(adminUsers.body.items.some((item) => item.email === "user@example.test"));
+  const expertUser = adminUsers.body.items.find((item) => item.email === "expert@problemos.local");
+  assert.ok(expertUser);
+
+  const assignedExpert = await api(baseUrl, `/api/admin/cases/${caseId}/assign-expert`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+    body: JSON.stringify({ expertId: expertUser.id })
+  });
+  assert.equal(assignedExpert.response.status, 200);
+  assert.equal(assignedExpert.body.item.assignedExpert.email, "expert@problemos.local");
+
+  const expert = await api(baseUrl, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: "expert@problemos.local", password: "expert123" })
+  });
+  assert.equal(expert.response.status, 200);
+
+  const expertCases = await api(baseUrl, "/api/expert/cases", {
+    headers: { Authorization: `Bearer ${expert.body.token}` }
+  });
+  assert.equal(expertCases.response.status, 200);
+  assert.ok(expertCases.body.items.some((item) => item.id === caseId));
+
+  const expertCannotEdit = await api(baseUrl, `/api/cases/${caseId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${expert.body.token}` },
+    body: JSON.stringify({ title: "Expert edit attempt" })
+  });
+  assert.equal(expertCannotEdit.response.status, 403);
+
+  const publicRecommendation = await api(baseUrl, `/api/cases/${caseId}/recommendations`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${expert.body.token}` },
+    body: JSON.stringify({ text: "Add seller response before escalation.", visibility: "user" })
+  });
+  assert.equal(publicRecommendation.response.status, 201);
+
+  const internalRecommendation = await api(baseUrl, `/api/cases/${caseId}/recommendations`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${expert.body.token}` },
+    body: JSON.stringify({ text: "Internal note for expert queue.", visibility: "internal" })
+  });
+  assert.equal(internalRecommendation.response.status, 201);
+
+  const userRecommendations = await api(baseUrl, `/api/cases/${caseId}/recommendations`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(userRecommendations.response.status, 200);
+  assert.ok(userRecommendations.body.items.some((item) => item.text.includes("seller response")));
+  assert.equal(userRecommendations.body.items.some((item) => item.text.includes("Internal note")), false);
+
+  const expertRecommendations = await api(baseUrl, `/api/cases/${caseId}/recommendations`, {
+    headers: { Authorization: `Bearer ${expert.body.token}` }
+  });
+  assert.equal(expertRecommendations.response.status, 200);
+  assert.ok(expertRecommendations.body.items.some((item) => item.visibility === "internal"));
 
   const adminCases = await api(baseUrl, "/api/admin/cases?status=escalation", {
     headers: { Authorization: `Bearer ${admin.body.token}` }
@@ -298,6 +354,63 @@ test("core user flow: register, create case, evidence, document, package", async
   });
   assert.equal(backup.response.status, 201);
   assert.ok(backup.body.backupFile.includes("problem-os-"));
+
+  const openapi = await api(baseUrl, "/api/openapi");
+  assert.equal(openapi.response.status, 200);
+  assert.equal(openapi.body.info.title, "ProblemOS API");
+
+  const adminTemplates = await api(baseUrl, "/api/admin/templates", {
+    headers: { Authorization: `Bearer ${admin.body.token}` }
+  });
+  assert.equal(adminTemplates.response.status, 200);
+  const template = adminTemplates.body.items[0];
+  const updatedTemplate = await api(baseUrl, `/api/admin/templates/${template.id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+    body: JSON.stringify({
+      title: `${template.title} v2`,
+      body: `${template.body}\n\nAdmin controlled footer.`,
+      variables: template.variables
+    })
+  });
+  assert.equal(updatedTemplate.response.status, 200);
+  assert.equal(updatedTemplate.body.item.version, (template.version ?? 1) + 1);
+
+  const versions = await api(baseUrl, `/api/admin/templates/${template.id}/versions`, {
+    headers: { Authorization: `Bearer ${admin.body.token}` }
+  });
+  assert.equal(versions.response.status, 200);
+  assert.ok(versions.body.items.length >= 1);
+
+  const restoredTemplate = await api(baseUrl, `/api/admin/templates/${template.id}/restore`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+    body: JSON.stringify({ versionId: versions.body.items[0].id })
+  });
+  assert.equal(restoredTemplate.response.status, 200);
+  assert.ok(restoredTemplate.body.item.version > updatedTemplate.body.item.version);
+
+  const adminCategories = await api(baseUrl, "/api/admin/categories", {
+    headers: { Authorization: `Bearer ${admin.body.token}` }
+  });
+  assert.equal(adminCategories.response.status, 200);
+  const category = adminCategories.body.items.find((item) => item.id === "product_return");
+  const updatedCategory = await api(baseUrl, `/api/admin/categories/${category.id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${admin.body.token}` },
+    body: JSON.stringify({
+      description: `${category.description} Updated by admin.`,
+      route: [...category.route, "Control result and archive evidence"]
+    })
+  });
+  assert.equal(updatedCategory.response.status, 200);
+  assert.equal(updatedCategory.body.item.route.at(-1), "Control result and archive evidence");
+
+  const migration = await fetch(`${baseUrl}/api/admin/migration/postgres`, {
+    headers: { Authorization: `Bearer ${admin.body.token}` }
+  });
+  assert.equal(migration.status, 200);
+  assert.ok((await migration.text()).includes("create table if not exists expert_recommendations"));
 });
 
 test("users cannot read other users cases", async (t) => {

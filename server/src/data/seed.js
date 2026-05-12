@@ -6,6 +6,7 @@ import { hashPassword } from "../utils/security.js";
 
 export function createSeedData() {
   const adminId = createId("user");
+  const expertId = createId("user");
   const demoId = createId("user");
   const caseId = createId("case");
   const now = nowIso();
@@ -21,6 +22,17 @@ export function createSeedData() {
         phone: "",
         telegramId: "",
         role: "admin",
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: expertId,
+        email: "expert@problemos.local",
+        passwordHash: hashPassword("expert123"),
+        fullName: "ProblemOS Expert",
+        phone: "",
+        telegramId: "",
+        role: "expert",
         createdAt: now,
         updatedAt: now
       },
@@ -42,6 +54,7 @@ export function createSeedData() {
       {
         id: caseId,
         userId: demoId,
+        expertId,
         title: "Возврат телефона",
         categoryId: "product_return",
         description: "Купил телефон, через 5 дней он перестал включаться, магазин отказывается возвращать деньги.",
@@ -76,6 +89,19 @@ export function createSeedData() {
     documentTemplates: DOCUMENT_TEMPLATES,
     generatedDocuments: [],
     caseComments: [],
+    expertRecommendations: [
+      {
+        id: createId("recommendation"),
+        caseId,
+        authorId: expertId,
+        text: "Upload the receipt, a photo of the defect and the seller response before generating the claim.",
+        visibility: "user",
+        status: "open",
+        createdAt: now,
+        updatedAt: now
+      }
+    ],
+    documentTemplateVersions: [],
     notifications: [
       {
         id: createId("notification"),

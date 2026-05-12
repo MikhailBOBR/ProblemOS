@@ -4,6 +4,11 @@ import { addDaysIso, createId, nowIso } from "../utils/id.js";
 import { analyzeProblem } from "./aiService.js";
 import { buildNextAction } from "./nextActionService.js";
 import { evaluateCaseCompleteness } from "./completenessService.js";
+import { getCaseRecommendations } from "./expertService.js";
+
+function resolveCategory(categoryId, categories = null) {
+  return (categories ?? []).find((category) => category.id === categoryId) ?? getCategory(categoryId);
+}
 
 function createSteps(category) {
   return category.route.map((title, index) => ({
@@ -26,9 +31,9 @@ function makeTitle(description, category) {
   return normalized.length > 48 ? `${normalized.slice(0, 48)}...` : normalized;
 }
 
-export function createCaseFromInput(userId, input) {
+export function createCaseFromInput(userId, input, categories = null) {
   const analysis = analyzeProblem(input.description ?? "");
-  const category = getCategory(input.categoryId || analysis.categoryId);
+  const category = resolveCategory(input.categoryId || analysis.categoryId, categories);
   const facts = {
     ...analysis.facts,
     ...(input.facts ?? {})
@@ -38,6 +43,7 @@ export function createCaseFromInput(userId, input) {
   const problemCase = {
     id: createId("case"),
     userId,
+    expertId: "",
     title: input.title?.trim() || makeTitle(input.description ?? "", category),
     categoryId: category.id,
     description: input.description?.trim() || "",
@@ -67,21 +73,27 @@ export function createCaseFromInput(userId, input) {
   return { problemCase, analysis };
 }
 
-export function enrichCase(problemCase, data) {
-  const category = getCategory(problemCase.categoryId);
+export function enrichCase(problemCase, data, viewer = null) {
+  const category = resolveCategory(problemCase.categoryId, data.categories);
+  const assignedExpert = problemCase.expertId ? data.users.find((user) => user.id === problemCase.expertId) : null;
   const availableTemplates = (data.documentTemplates ?? [])
     .filter((template) => template.categoryId === problemCase.categoryId && template.isActive)
     .map((template) => ({
       id: template.id,
       title: template.title,
       type: template.type,
-      variables: template.variables
+      variables: template.variables,
+      version: template.version ?? 1
     }));
 
   return {
     ...problemCase,
     category,
+    assignedExpert: assignedExpert
+      ? { id: assignedExpert.id, fullName: assignedExpert.fullName, email: assignedExpert.email, role: assignedExpert.role }
+      : null,
     availableTemplates,
+    recommendations: getCaseRecommendations(data, problemCase, viewer),
     completeness: evaluateCaseCompleteness(problemCase, data.documentTemplates ?? []),
     progress: {
       done: problemCase.steps.filter((step) => step.status === STEP_STATUS.DONE).length,

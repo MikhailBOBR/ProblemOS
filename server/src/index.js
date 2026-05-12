@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { JsonStore } from "./data/store.js";
-import { CATEGORIES, getCategory } from "./domain/categories.js";
+import { CATEGORIES } from "./domain/categories.js";
 import { CASE_STATUS_META } from "./domain/statuses.js";
 import { analyzeProblem } from "./services/aiService.js";
 import { addEvidenceToCase, createCaseFromInput, enrichCase, updateCaseWithInput } from "./services/caseService.js";
@@ -20,6 +20,12 @@ import { runDeadlineScheduler } from "./services/schedulerService.js";
 import { dispatchTelegramNotifications } from "./services/telegramDeliveryService.js";
 import { handleTelegramUpdate } from "./services/telegramService.js";
 import { performCaseAction } from "./services/workflowService.js";
+import { buildApiDocs } from "./services/apiDocsService.js";
+import { assignExpertToCase, createExpertRecommendation, getCaseRecommendations } from "./services/expertService.js";
+import { buildPostgresMigrationSql } from "./services/postgresMigrationService.js";
+import { updateCategoryPlaybook } from "./services/playbookService.js";
+import { assertCaseEdit, assertCaseReview, assertRole, canAccessCase, ROLES, sanitizeRole } from "./services/rbacService.js";
+import { getTemplateVersions, restoreTemplateVersion, updateTemplateFromInput } from "./services/templateVersionService.js";
 import { createBotDraftFromMessage } from "./telegram/botAdapter.js";
 import { createId } from "./utils/id.js";
 import { createSessionToken, hashPassword, sanitizeUser, verifyPassword } from "./utils/security.js";
@@ -48,6 +54,7 @@ async function requireUser(req, store) {
 }
 
 function requireAdmin(user) {
+  assertRole(user, ROLES.ADMIN, "Admin role required");
   if (user.role !== "admin") {
     throw createHttpError(403, "Нужны права администратора");
   }
@@ -58,7 +65,7 @@ function getCaseForUser(data, user, caseId) {
   if (!problemCase) {
     throw createHttpError(404, "Дело не найдено");
   }
-  if (user.role !== "admin" && problemCase.userId !== user.id) {
+  if (!canAccessCase(user, problemCase)) {
     throw createHttpError(403, "Нет доступа к этому делу");
   }
   return problemCase;
@@ -71,7 +78,7 @@ function findEvidenceForUser(data, user, evidenceId) {
       continue;
     }
 
-    if (user.role !== "admin" && problemCase.userId !== user.id) {
+    if (!canAccessCase(user, problemCase)) {
       throw createHttpError(403, "Нет доступа к этому доказательству");
     }
 
@@ -147,6 +154,11 @@ async function routeApi(req, res, store, options = {}) {
 
   if (method === "GET" && pathname === "/api/health") {
     sendJson(res, 200, { ok: true, service: "ProblemOS", time: new Date().toISOString(), uptimeSeconds: Math.round(process.uptime()) });
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/openapi") {
+    sendJson(res, 200, buildApiDocs());
     return true;
   }
 
@@ -312,9 +324,20 @@ async function routeApi(req, res, store, options = {}) {
 
   if (method === "GET" && pathname === "/api/cases") {
     const { data, user } = await requireUser(req, store);
-    const visibleCases = data.cases.filter((item) => user.role === "admin" || item.userId === user.id);
+    const visibleCases = data.cases.filter((item) => canAccessCase(user, item));
     const items = filterCases(visibleCases, url)
-      .map((item) => enrichCase(item, data))
+      .map((item) => enrichCase(item, data, user))
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    sendJson(res, 200, { items, total: items.length });
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/expert/cases") {
+    const { data, user } = await requireUser(req, store);
+    assertRole(user, [ROLES.ADMIN, ROLES.EXPERT], "Expert role required");
+    const visibleCases = user.role === ROLES.ADMIN ? data.cases : data.cases.filter((item) => item.expertId === user.id);
+    const items = filterCases(visibleCases, url)
+      .map((item) => enrichCase(item, data, user))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     sendJson(res, 200, { items, total: items.length });
     return true;
@@ -325,7 +348,7 @@ async function routeApi(req, res, store, options = {}) {
     const body = await readJson(req);
 
     const result = await store.mutate((data) => {
-      const { problemCase, analysis } = createCaseFromInput(user.id, body);
+      const { problemCase, analysis } = createCaseFromInput(user.id, body, data.categories);
       data.cases.push(problemCase);
       data.notifications.push(
         createNotification({
@@ -345,7 +368,7 @@ async function routeApi(req, res, store, options = {}) {
         title: "Дело создано",
         details: { categoryId: problemCase.categoryId, source: "web" }
       });
-      return { item: enrichCase(problemCase, data), analysis };
+      return { item: enrichCase(problemCase, data, user), analysis };
     });
 
     sendJson(res, 201, result);
@@ -356,7 +379,7 @@ async function routeApi(req, res, store, options = {}) {
   if (caseParams && method === "GET") {
     const { data, user } = await requireUser(req, store);
     const problemCase = getCaseForUser(data, user, caseParams.id);
-    sendJson(res, 200, { item: enrichCase(problemCase, data) });
+    sendJson(res, 200, { item: enrichCase(problemCase, data, user) });
     return true;
   }
 
@@ -368,12 +391,67 @@ async function routeApi(req, res, store, options = {}) {
     return true;
   }
 
+  const recommendationParams = matchPath(pathname, "/api/cases/:id/recommendations");
+  if (recommendationParams && method === "GET") {
+    const { data, user } = await requireUser(req, store);
+    const problemCase = getCaseForUser(data, user, recommendationParams.id);
+    sendJson(res, 200, { items: getCaseRecommendations(data, problemCase, user) });
+    return true;
+  }
+
+  if (recommendationParams && method === "POST") {
+    const { user } = await requireUser(req, store);
+    const body = await readJson(req);
+    const text = String(body.text ?? "").trim();
+    if (!text) {
+      throw createHttpError(400, "Recommendation text is required");
+    }
+
+    const result = await store.mutate((data) => {
+      const problemCase = getCaseForUser(data, user, recommendationParams.id);
+      assertCaseReview(user, problemCase, "Expert review access denied");
+      const recommendation = createExpertRecommendation({
+        caseId: problemCase.id,
+        authorId: user.id,
+        text,
+        visibility: body.visibility,
+        status: body.status
+      });
+      data.expertRecommendations.push(recommendation);
+      if (recommendation.visibility === "user") {
+        data.notifications.push(
+          createNotification({
+            userId: problemCase.userId,
+            caseId: problemCase.id,
+            type: "expert_recommendation",
+            title: "Expert recommendation",
+            message: recommendation.text
+          })
+        );
+      }
+      appendAuditLog(data, {
+        actorId: user.id,
+        caseId: problemCase.id,
+        entityType: "expert_recommendation",
+        entityId: recommendation.id,
+        action: "recommendation.created",
+        title: "Expert recommendation created",
+        details: { visibility: recommendation.visibility, status: recommendation.status }
+      });
+      return { item: getCaseRecommendations(data, problemCase, user).find((item) => item.id === recommendation.id) };
+    });
+
+    sendJson(res, 201, result);
+    return true;
+  }
+
   if (caseParams && method === "PATCH") {
     const { user } = await requireUser(req, store);
     const body = await readJson(req);
 
     const result = await store.mutate((data) => {
       const problemCase = getCaseForUser(data, user, caseParams.id);
+      assertCaseEdit(user, problemCase, "Case edit denied");
       const nextCase = updateCaseWithInput(problemCase, body);
       replaceCase(data, nextCase);
       appendAuditLog(data, {
@@ -385,7 +463,7 @@ async function routeApi(req, res, store, options = {}) {
         title: "Дело обновлено",
         details: { changedFields: Object.keys(body) }
       });
-      return { item: enrichCase(nextCase, data) };
+      return { item: enrichCase(nextCase, data, user) };
     });
 
     sendJson(res, 200, result);
@@ -399,6 +477,7 @@ async function routeApi(req, res, store, options = {}) {
 
     const result = await store.mutate((data) => {
       const problemCase = getCaseForUser(data, user, actionParams.id);
+      assertCaseEdit(user, problemCase, "Case action denied");
       const nextCase = performCaseAction(problemCase, String(body.action ?? ""), body);
       replaceCase(data, nextCase);
       data.notifications.push(
@@ -419,7 +498,7 @@ async function routeApi(req, res, store, options = {}) {
         title: "Workflow-действие выполнено",
         details: { action: body.action, status: nextCase.status }
       });
-      return { item: enrichCase(nextCase, data) };
+      return { item: enrichCase(nextCase, data, user) };
     });
 
     sendJson(res, 200, result);
@@ -433,6 +512,7 @@ async function routeApi(req, res, store, options = {}) {
 
     const result = await store.mutate(async (data) => {
       const problemCase = getCaseForUser(data, user, evidenceParams.id);
+      assertCaseEdit(user, problemCase, "Evidence upload denied");
       const evidenceId = createId("evidence");
       const fileMeta = await persistEvidenceFile({
         uploadRoot,
@@ -453,7 +533,7 @@ async function routeApi(req, res, store, options = {}) {
         title: "Доказательство загружено",
         details: { evidenceType: evidence.evidenceType, hasFile: evidence.hasFile, fileHash: evidence.fileHash }
       });
-      return { item: evidence, case: enrichCase(next, data) };
+      return { item: evidence, case: enrichCase(next, data, user) };
     });
 
     sendJson(res, 201, result);
@@ -537,6 +617,7 @@ async function routeApi(req, res, store, options = {}) {
 
     const result = await store.mutate((data) => {
       const problemCase = getCaseForUser(data, user, generateParams.id);
+      assertCaseEdit(user, problemCase, "Document generation denied");
       const templates = getTemplatesForCategory(data, problemCase.categoryId);
       const template = templates.find((item) => item.id === body.templateId) ?? templates[0];
 
@@ -558,7 +639,7 @@ async function routeApi(req, res, store, options = {}) {
         title: "Документ сформирован",
         details: { templateId: template.id, title: document.title }
       });
-      return { item: document, case: enrichCase(nextCase, data) };
+      return { item: document, case: enrichCase(nextCase, data, user) };
     });
 
     sendJson(res, 201, result);
@@ -759,12 +840,41 @@ async function routeApi(req, res, store, options = {}) {
     return true;
   }
 
+  const adminUserRoleParams = matchPath(pathname, "/api/admin/users/:id/role");
+  if (adminUserRoleParams && method === "PATCH") {
+    const { user } = await requireUser(req, store);
+    requireAdmin(user);
+    const body = await readJson(req);
+    const nextRole = sanitizeRole(String(body.role ?? ""));
+
+    const result = await store.mutate((data) => {
+      const targetUser = data.users.find((item) => item.id === adminUserRoleParams.id);
+      if (!targetUser) {
+        throw createHttpError(404, "User not found");
+      }
+      targetUser.role = nextRole;
+      targetUser.updatedAt = new Date().toISOString();
+      appendAuditLog(data, {
+        actorId: user.id,
+        entityType: "user",
+        entityId: targetUser.id,
+        action: "user.role_updated",
+        title: "User role updated",
+        details: { role: nextRole }
+      });
+      return { item: sanitizeUser(targetUser) };
+    });
+
+    sendJson(res, 200, result);
+    return true;
+  }
+
   if (method === "GET" && pathname === "/api/admin/cases") {
     const { data, user } = await requireUser(req, store);
     requireAdmin(user);
     const items = filterCases(data.cases, url)
       .map((item) => ({
-        ...enrichCase(item, data),
+        ...enrichCase(item, data, user),
         owner: sanitizeUser(data.users.find((candidate) => candidate.id === item.userId))
       }))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -772,10 +882,103 @@ async function routeApi(req, res, store, options = {}) {
     return true;
   }
 
+  const assignExpertParams = matchPath(pathname, "/api/admin/cases/:id/assign-expert");
+  if (assignExpertParams && method === "PATCH") {
+    const { user } = await requireUser(req, store);
+    requireAdmin(user);
+    const body = await readJson(req);
+    const expertId = String(body.expertId ?? "").trim();
+
+    const result = await store.mutate((data) => {
+      const problemCase = data.cases.find((item) => item.id === assignExpertParams.id);
+      if (!problemCase) {
+        throw createHttpError(404, "Case not found");
+      }
+      if (expertId) {
+        const expert = data.users.find((item) => item.id === expertId);
+        if (!expert || expert.role !== ROLES.EXPERT) {
+          throw createHttpError(400, "Selected user is not an expert");
+        }
+      }
+      const nextCase = assignExpertToCase(data, problemCase, expertId, user.id);
+      replaceCase(data, nextCase);
+      return { item: enrichCase(nextCase, data, user) };
+    });
+
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/admin/categories") {
+    const { data, user } = await requireUser(req, store);
+    requireAdmin(user);
+    sendJson(res, 200, { items: data.categories });
+    return true;
+  }
+
+  const adminCategoryParams = matchPath(pathname, "/api/admin/categories/:id");
+  if (adminCategoryParams && method === "PATCH") {
+    const { user } = await requireUser(req, store);
+    requireAdmin(user);
+    const body = await readJson(req);
+
+    const result = await store.mutate((data) => {
+      const category = data.categories.find((item) => item.id === adminCategoryParams.id);
+      if (!category) {
+        throw createHttpError(404, "Category not found");
+      }
+      return { item: updateCategoryPlaybook(data, category, body, user.id) };
+    });
+
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/admin/migration/postgres") {
+    const { user } = await requireUser(req, store);
+    requireAdmin(user);
+    sendText(res, 200, buildPostgresMigrationSql(), { "Content-Type": "text/plain; charset=utf-8" });
+    return true;
+  }
+
   if (method === "GET" && pathname === "/api/admin/templates") {
     const { data, user } = await requireUser(req, store);
     requireAdmin(user);
     sendJson(res, 200, { items: data.documentTemplates, categories: data.categories });
+    return true;
+  }
+
+  const templateVersionsParams = matchPath(pathname, "/api/admin/templates/:id/versions");
+  if (templateVersionsParams && method === "GET") {
+    const { data, user } = await requireUser(req, store);
+    requireAdmin(user);
+    const template = data.documentTemplates.find((item) => item.id === templateVersionsParams.id);
+    if (!template) {
+      throw createHttpError(404, "Template not found");
+    }
+    sendJson(res, 200, { template, items: getTemplateVersions(data, template.id) });
+    return true;
+  }
+
+  const templateRestoreParams = matchPath(pathname, "/api/admin/templates/:id/restore");
+  if (templateRestoreParams && method === "POST") {
+    const { user } = await requireUser(req, store);
+    requireAdmin(user);
+    const body = await readJson(req);
+
+    const result = await store.mutate((data) => {
+      const template = data.documentTemplates.find((item) => item.id === templateRestoreParams.id);
+      if (!template) {
+        throw createHttpError(404, "Template not found");
+      }
+      const version = (data.documentTemplateVersions ?? []).find((item) => item.id === body.versionId && item.templateId === template.id);
+      if (!version) {
+        throw createHttpError(404, "Template version not found");
+      }
+      return { item: restoreTemplateVersion(data, template, version, user.id), versions: getTemplateVersions(data, template.id) };
+    });
+
+    sendJson(res, 200, result);
     return true;
   }
 
@@ -790,18 +993,7 @@ async function routeApi(req, res, store, options = {}) {
       if (!template) {
         throw createHttpError(404, "Шаблон не найден");
       }
-      template.title = body.title ?? template.title;
-      template.body = body.body ?? template.body;
-      template.isActive = body.isActive ?? template.isActive;
-      appendAuditLog(data, {
-        actorId: user.id,
-        entityType: "document_template",
-        entityId: template.id,
-        action: "template.updated",
-        title: "Шаблон документа обновлен",
-        details: { title: template.title, isActive: template.isActive }
-      });
-      return { item: template };
+      return { item: updateTemplateFromInput(data, template, body, user.id), versions: getTemplateVersions(data, template.id) };
     });
 
     sendJson(res, 200, result);

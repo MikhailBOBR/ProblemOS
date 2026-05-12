@@ -15,7 +15,10 @@ const state = {
   adminStats: null,
   adminDiagnostics: null,
   adminMessage: "",
-  templates: []
+  templates: [],
+  adminUsers: [],
+  adminCases: [],
+  adminCategories: []
 };
 
 const statusTone = {
@@ -100,10 +103,20 @@ async function loadNotifications() {
 
 async function loadAdmin() {
   if (state.user?.role !== "admin") return;
-  state.adminStats = await api("/api/admin/stats");
-  state.adminDiagnostics = await api("/api/diagnostics");
-  const templates = await api("/api/admin/templates");
+  const [stats, diagnostics, templates, users, cases, categories] = await Promise.all([
+    api("/api/admin/stats"),
+    api("/api/diagnostics"),
+    api("/api/admin/templates"),
+    api("/api/admin/users"),
+    api("/api/admin/cases"),
+    api("/api/admin/categories")
+  ]);
+  state.adminStats = stats;
+  state.adminDiagnostics = diagnostics;
   state.templates = templates.items;
+  state.adminUsers = users.items;
+  state.adminCases = cases.items;
+  state.adminCategories = categories.items;
 }
 
 async function bootstrap() {
@@ -403,6 +416,62 @@ function renderCompleteness(item) {
   `;
 }
 
+function renderRecommendations(item) {
+  const canReview = ["admin", "expert"].includes(state.user?.role);
+  const recommendations = item.recommendations || [];
+
+  return `
+    <div class="readiness" style="margin-top:14px">
+      <div class="readiness-head">
+        <strong>Expert recommendations</strong>
+        <span class="status ${item.assignedExpert ? "info" : "muted"}">${escapeHtml(item.assignedExpert?.fullName || "no expert")}</span>
+      </div>
+      <div class="timeline" style="margin-top:10px">
+        ${
+          recommendations.length
+            ? recommendations.map((entry) => `
+              <div class="line-item ${entry.visibility === "internal" ? "active" : ""}">
+                <div class="line-title">${escapeHtml(entry.author?.fullName || "Expert")} - ${escapeHtml(entry.visibility)}</div>
+                <div class="line-subtitle">${escapeHtml(entry.text)}</div>
+              </div>
+            `).join("")
+            : `<div class="hint">No expert recommendations yet.</div>`
+        }
+      </div>
+      ${
+        canReview
+          ? `
+            <form class="form" data-recommendation-form="${item.id}" style="margin-top:12px">
+              <div class="grid cols-2">
+                <div class="field">
+                  <label>Visibility</label>
+                  <select name="visibility">
+                    <option value="user">User-visible</option>
+                    <option value="internal">Internal</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Status</label>
+                  <select name="status">
+                    <option value="open">Open</option>
+                    <option value="accepted">Accepted</option>
+                    <option value="resolved">Resolved</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field">
+                <label>Recommendation</label>
+                <textarea name="text" placeholder="What should happen next?"></textarea>
+              </div>
+              <button class="btn primary" type="submit">Add recommendation</button>
+            </form>
+          `
+          : ""
+      }
+    </div>
+  `;
+}
+
 function renderCaseDetails(item) {
   const status = getStatus(item.status);
   const category = item.category || state.categories.find((categoryItem) => categoryItem.id === item.categoryId);
@@ -426,6 +495,7 @@ function renderCaseDetails(item) {
           <div class="notice" style="margin-top:14px">${escapeHtml(item.nextAction)}</div>
           ${renderCompleteness(item)}
           ${renderWorkflowActions(item)}
+          ${renderRecommendations(item)}
         </div>
         <div class="panel">
           <h2 class="section-title">Доказательства</h2>
@@ -714,6 +784,78 @@ function renderProfile() {
   `;
 }
 
+function renderAdminManagement() {
+  const experts = state.adminUsers.filter((user) => user.role === "expert");
+
+  return `
+    <section class="grid cols-2" style="margin-top:16px">
+      <div class="panel">
+        <h2 class="section-title">Users and roles</h2>
+        <div class="timeline">
+          ${state.adminUsers.map((user) => `
+            <form class="line-item" data-role-form="${user.id}">
+              <div class="line-title">${escapeHtml(user.fullName || user.email)}</div>
+              <div class="line-subtitle">${escapeHtml(user.email)} - cases: ${escapeHtml(String(user.casesCount || 0))}</div>
+              <div class="toolbar" style="margin-top:8px">
+                <select name="role">
+                  ${["user", "expert", "admin"].map((role) => `<option value="${role}" ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}
+                </select>
+                <button class="btn ghost" type="submit">Save role</button>
+              </div>
+            </form>
+          `).join("")}
+        </div>
+      </div>
+      <div class="panel">
+        <h2 class="section-title">Expert queue</h2>
+        <div class="timeline">
+          ${state.adminCases.slice(0, 8).map((item) => `
+            <form class="line-item" data-assign-expert-form="${item.id}">
+              <div class="line-title">${escapeHtml(item.title)}</div>
+              <div class="line-subtitle">${escapeHtml(item.owner?.email || "")} - ${escapeHtml(item.status)}</div>
+              <div class="toolbar" style="margin-top:8px">
+                <select name="expertId">
+                  <option value="">No expert</option>
+                  ${experts.map((expert) => `<option value="${expert.id}" ${item.expertId === expert.id ? "selected" : ""}>${escapeHtml(expert.fullName || expert.email)}</option>`).join("")}
+                </select>
+                <button class="btn ghost" type="submit">Assign</button>
+              </div>
+            </form>
+          `).join("")}
+        </div>
+      </div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2 class="section-title">Category playbooks</h2>
+      <div class="grid">
+        ${state.adminCategories.map((category) => `
+          <form class="form" data-category-form="${category.id}">
+            <div class="grid cols-2">
+              <div class="field">
+                <label>Name</label>
+                <input name="name" value="${escapeHtml(category.name)}" />
+              </div>
+              <div class="field">
+                <label>Deadline days</label>
+                <input name="defaultDeadlineDays" type="number" min="1" max="365" value="${escapeHtml(category.defaultDeadlineDays)}" />
+              </div>
+            </div>
+            <div class="field">
+              <label>Description</label>
+              <textarea name="description">${escapeHtml(category.description)}</textarea>
+            </div>
+            <div class="field">
+              <label>Route, one step per line</label>
+              <textarea name="route">${escapeHtml((category.route || []).join("\n"))}</textarea>
+            </div>
+            <button class="btn primary" type="submit">Save playbook</button>
+          </form>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderAdmin() {
   if (state.user.role !== "admin") {
     return `<div class="panel">Нет доступа.</div>`;
@@ -729,6 +871,7 @@ function renderAdmin() {
       ${metric("Документы", stats.documents || 0)}
       ${metric("Audit log", stats.auditLogs || 0)}
     </section>
+    ${renderAdminManagement()}
     <section class="split" style="margin-top:16px">
       <div class="panel">
         <h2 class="section-title">Операции</h2>
@@ -843,6 +986,10 @@ function bindViewEvents() {
     form.addEventListener("submit", addComment);
   });
 
+  document.querySelectorAll("[data-recommendation-form]").forEach((form) => {
+    form.addEventListener("submit", addRecommendation);
+  });
+
   document.querySelectorAll("[data-document-form]").forEach((form) => {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -874,6 +1021,15 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-template-id]").forEach((form) => {
     form.addEventListener("submit", saveTemplate);
+  });
+  document.querySelectorAll("[data-role-form]").forEach((form) => {
+    form.addEventListener("submit", saveUserRole);
+  });
+  document.querySelectorAll("[data-assign-expert-form]").forEach((form) => {
+    form.addEventListener("submit", assignExpert);
+  });
+  document.querySelectorAll("[data-category-form]").forEach((form) => {
+    form.addEventListener("submit", saveCategoryPlaybook);
   });
 
   document.querySelector("[data-action='read-all-notifications']")?.addEventListener("click", markAllNotificationsRead);
@@ -1031,6 +1187,44 @@ async function saveTemplate(event) {
   await refreshAll();
 }
 
+async function saveUserRole(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  await api(`/api/admin/users/${event.currentTarget.dataset.roleForm}/role`, {
+    method: "PATCH",
+    body: JSON.stringify({ role: form.get("role") })
+  });
+  await refreshAll();
+}
+
+async function assignExpert(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  await api(`/api/admin/cases/${event.currentTarget.dataset.assignExpertForm}/assign-expert`, {
+    method: "PATCH",
+    body: JSON.stringify({ expertId: form.get("expertId") })
+  });
+  await refreshAll();
+}
+
+async function saveCategoryPlaybook(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  await api(`/api/admin/categories/${event.currentTarget.dataset.categoryForm}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      name: form.get("name"),
+      description: form.get("description"),
+      defaultDeadlineDays: Number(form.get("defaultDeadlineDays")),
+      route: String(form.get("route") || "")
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    })
+  });
+  await refreshAll();
+}
+
 async function addComment(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -1040,6 +1234,23 @@ async function addComment(event) {
   await api(`/api/cases/${event.currentTarget.dataset.commentForm}/comments`, {
     method: "POST",
     body: JSON.stringify({ text })
+  });
+  await refreshAll();
+}
+
+async function addRecommendation(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const text = String(form.get("text") || "").trim();
+  if (!text) return;
+
+  await api(`/api/cases/${event.currentTarget.dataset.recommendationForm}/recommendations`, {
+    method: "POST",
+    body: JSON.stringify({
+      text,
+      visibility: form.get("visibility"),
+      status: form.get("status")
+    })
   });
   await refreshAll();
 }

@@ -21,6 +21,7 @@ http://127.0.0.1:8080
 ```text
 admin@problemos.local / admin123
 demo@problemos.local  / demo123
+expert@problemos.local / expert123
 ```
 
 ## Проверка

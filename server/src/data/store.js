@@ -1,6 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createSeedData } from "./seed.js";
+import { createId, nowIso } from "../utils/id.js";
+import { hashPassword } from "../utils/security.js";
 
 function normalizeData(data) {
   data.version = data.version ?? 1;
@@ -14,6 +16,23 @@ function normalizeData(data) {
   data.botSessions = data.botSessions ?? [];
   data.auditLogs = data.auditLogs ?? [];
   data.caseComments = data.caseComments ?? [];
+  data.expertRecommendations = data.expertRecommendations ?? [];
+  data.documentTemplateVersions = data.documentTemplateVersions ?? [];
+
+  if (!data.users.some((user) => user.email === "expert@problemos.local")) {
+    const now = nowIso();
+    data.users.push({
+      id: createId("user"),
+      email: "expert@problemos.local",
+      passwordHash: hashPassword("expert123"),
+      fullName: "ProblemOS Expert",
+      phone: "",
+      telegramId: "",
+      role: "expert",
+      createdAt: now,
+      updatedAt: now
+    });
+  }
 
   for (const user of data.users) {
     user.phone = user.phone ?? "";
@@ -23,10 +42,28 @@ function normalizeData(data) {
   }
 
   for (const problemCase of data.cases) {
+    problemCase.expertId = problemCase.expertId ?? "";
     problemCase.evidence = problemCase.evidence ?? [];
     problemCase.documents = problemCase.documents ?? [];
     problemCase.timeline = problemCase.timeline ?? [];
     problemCase.steps = problemCase.steps ?? [];
+  }
+
+  for (const template of data.documentTemplates) {
+    template.version = template.version ?? 1;
+    template.updatedAt = template.updatedAt ?? null;
+    template.updatedBy = template.updatedBy ?? "";
+  }
+
+  for (const category of data.categories) {
+    category.updatedAt = category.updatedAt ?? null;
+    category.updatedBy = category.updatedBy ?? "";
+  }
+
+  for (const recommendation of data.expertRecommendations) {
+    recommendation.visibility = recommendation.visibility ?? "user";
+    recommendation.status = recommendation.status ?? "open";
+    recommendation.updatedAt = recommendation.updatedAt ?? recommendation.createdAt ?? new Date().toISOString();
   }
 
   for (const notification of data.notifications) {
