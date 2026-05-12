@@ -103,6 +103,16 @@
 | send_at | timestamptz | когда показывать/отправлять |
 | created_at | timestamptz | дата создания |
 
+## case_comments
+
+| field | type | note |
+| --- | --- | --- |
+| id | uuid/text pk | комментарий |
+| case_id | fk cases | дело |
+| author_id | fk users | автор |
+| text | text | текст комментария |
+| created_at | timestamptz | дата создания |
+
 ## audit_logs
 
 | field | type | note |

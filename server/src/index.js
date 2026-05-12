@@ -6,7 +6,11 @@ import { CATEGORIES, getCategory } from "./domain/categories.js";
 import { CASE_STATUS_META } from "./domain/statuses.js";
 import { analyzeProblem } from "./services/aiService.js";
 import { addEvidenceToCase, createCaseFromInput, enrichCase, updateCaseWithInput } from "./services/caseService.js";
-import { attachGeneratedDocument, buildCasePackage, generateDocument, toRtf } from "./services/documentService.js";
+import { attachGeneratedDocument, buildCasePackage, generateDocument } from "./services/documentService.js";
+import { buildCasePackageZip } from "./services/casePackageService.js";
+import { createCaseComment, getCaseComments } from "./services/commentService.js";
+import { evaluateCaseCompleteness } from "./services/completenessService.js";
+import { exportDocument } from "./services/documentExportService.js";
 import { openEvidenceFile, persistEvidenceFile, sanitizeFileName } from "./services/fileStorageService.js";
 import { appendAuditLog, getAuditLogsForCase } from "./services/auditLogService.js";
 import { buildDeadlineNotifications, createNotification } from "./services/notificationService.js";
@@ -99,6 +103,33 @@ function matchPath(pathname, pattern) {
 
 function getTemplatesForCategory(data, categoryId) {
   return data.documentTemplates.filter((template) => template.categoryId === categoryId && template.isActive);
+}
+
+function filterCases(items, url) {
+  const status = url.searchParams.get("status");
+  const categoryId = url.searchParams.get("categoryId");
+  const priority = url.searchParams.get("priority");
+  const query = (url.searchParams.get("q") || "").trim().toLowerCase();
+
+  return items.filter((item) => {
+    if (status && item.status !== status) return false;
+    if (categoryId && item.categoryId !== categoryId) return false;
+    if (priority && item.priority !== priority) return false;
+    if (query) {
+      const haystack = [item.title, item.description, item.status, item.priority, item.categoryId].join(" ").toLowerCase();
+      return haystack.includes(query);
+    }
+    return true;
+  });
+}
+
+function sendBuffer(res, statusCode, body, headers = {}) {
+  res.writeHead(statusCode, {
+    "Content-Type": "application/octet-stream",
+    "Content-Length": body.length,
+    ...headers
+  });
+  res.end(body);
 }
 
 async function routeApi(req, res, store, options = {}) {
@@ -267,11 +298,11 @@ async function routeApi(req, res, store, options = {}) {
 
   if (method === "GET" && pathname === "/api/cases") {
     const { data, user } = await requireUser(req, store);
-    const items = data.cases
-      .filter((item) => user.role === "admin" || item.userId === user.id)
+    const visibleCases = data.cases.filter((item) => user.role === "admin" || item.userId === user.id);
+    const items = filterCases(visibleCases, url)
       .map((item) => enrichCase(item, data))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    sendJson(res, 200, { items });
+    sendJson(res, 200, { items, total: items.length });
     return true;
   }
 
@@ -440,6 +471,51 @@ async function routeApi(req, res, store, options = {}) {
     return true;
   }
 
+  const completenessParams = matchPath(pathname, "/api/cases/:id/completeness");
+  if (completenessParams && method === "GET") {
+    const { data, user } = await requireUser(req, store);
+    const problemCase = getCaseForUser(data, user, completenessParams.id);
+    sendJson(res, 200, { item: evaluateCaseCompleteness(problemCase, data.documentTemplates ?? []) });
+    return true;
+  }
+
+  const commentsParams = matchPath(pathname, "/api/cases/:id/comments");
+  if (commentsParams && method === "GET") {
+    const { data, user } = await requireUser(req, store);
+    getCaseForUser(data, user, commentsParams.id);
+    sendJson(res, 200, { items: getCaseComments(data, commentsParams.id) });
+    return true;
+  }
+
+  if (commentsParams && method === "POST") {
+    const { user } = await requireUser(req, store);
+    const body = await readJson(req);
+    const text = String(body.text ?? "").trim();
+
+    if (!text) {
+      throw createHttpError(400, "Комментарий не может быть пустым");
+    }
+
+    const result = await store.mutate((data) => {
+      const problemCase = getCaseForUser(data, user, commentsParams.id);
+      const comment = createCaseComment({ caseId: problemCase.id, authorId: user.id, text });
+      data.caseComments.push(comment);
+      appendAuditLog(data, {
+        actorId: user.id,
+        caseId: problemCase.id,
+        entityType: "case_comment",
+        entityId: comment.id,
+        action: "comment.created",
+        title: "Комментарий добавлен",
+        details: { length: text.length }
+      });
+      return { item: getCaseComments(data, problemCase.id).find((item) => item.id === comment.id) };
+    });
+
+    sendJson(res, 201, result);
+    return true;
+  }
+
   const generateParams = matchPath(pathname, "/api/cases/:id/documents/generate");
   if (generateParams && method === "POST") {
     const { user } = await requireUser(req, store);
@@ -479,6 +555,17 @@ async function routeApi(req, res, store, options = {}) {
   if (packageParams && method === "GET") {
     const { data, user } = await requireUser(req, store);
     const problemCase = getCaseForUser(data, user, packageParams.id);
+    const format = url.searchParams.get("format") || "md";
+
+    if (format === "zip") {
+      const archive = await buildCasePackageZip({ problemCase, data, uploadRoot });
+      sendBuffer(res, 200, archive, {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(problemCase.title)}.zip"`
+      });
+      return true;
+    }
+
     const content = buildCasePackage(problemCase, data);
     sendText(res, 200, content, {
       "Content-Type": "text/markdown; charset=utf-8",
@@ -495,9 +582,10 @@ async function routeApi(req, res, store, options = {}) {
       throw createHttpError(404, "Документ не найден");
     }
     const problemCase = getCaseForUser(data, user, document.caseId);
-    const fileName = `${problemCase.title}-${document.title}.rtf`.replace(/[\\/:*?"<>|]+/g, "-");
-    sendText(res, 200, toRtf(document), {
-      "Content-Type": "application/rtf; charset=utf-8",
+    const exported = exportDocument(document, url.searchParams.get("format") || "rtf");
+    const fileName = `${problemCase.title}-${exported.fileName}`.replace(/[\\/:*?"<>|]+/g, "-");
+    sendBuffer(res, 200, exported.body, {
+      "Content-Type": exported.contentType,
       "Content-Disposition": `attachment; filename="${encodeURIComponent(fileName)}"`
     });
     return true;
@@ -558,6 +646,36 @@ async function routeApi(req, res, store, options = {}) {
     sendJson(res, 200, {
       items: [...data.auditLogs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 200)
     });
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/admin/users") {
+    const { data, user } = await requireUser(req, store);
+    requireAdmin(user);
+    const caseCounts = new Map();
+    for (const problemCase of data.cases) {
+      caseCounts.set(problemCase.userId, (caseCounts.get(problemCase.userId) ?? 0) + 1);
+    }
+    sendJson(res, 200, {
+      items: data.users.map((item) => ({
+        ...sanitizeUser(item),
+        casesCount: caseCounts.get(item.id) ?? 0,
+        telegramLinked: Boolean(item.telegramId)
+      }))
+    });
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/admin/cases") {
+    const { data, user } = await requireUser(req, store);
+    requireAdmin(user);
+    const items = filterCases(data.cases, url)
+      .map((item) => ({
+        ...enrichCase(item, data),
+        owner: sanitizeUser(data.users.find((candidate) => candidate.id === item.userId))
+      }))
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    sendJson(res, 200, { items, total: items.length });
     return true;
   }
 

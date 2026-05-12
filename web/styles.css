@@ -442,6 +442,28 @@ button {
   line-height: 1.5;
 }
 
+.template-select {
+  min-height: 38px;
+  min-width: min(100%, 280px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: white;
+}
+
+.readiness {
+  margin-top: 14px;
+  display: grid;
+  gap: 9px;
+}
+
+.readiness-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .admin-template textarea {
   min-height: 240px;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;

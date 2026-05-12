@@ -3,6 +3,7 @@ import { CASE_STATUS, STEP_STATUS } from "../domain/statuses.js";
 import { addDaysIso, createId, nowIso } from "../utils/id.js";
 import { analyzeProblem } from "./aiService.js";
 import { buildNextAction } from "./nextActionService.js";
+import { evaluateCaseCompleteness } from "./completenessService.js";
 
 function createSteps(category) {
   return category.route.map((title, index) => ({
@@ -68,9 +69,20 @@ export function createCaseFromInput(userId, input) {
 
 export function enrichCase(problemCase, data) {
   const category = getCategory(problemCase.categoryId);
+  const availableTemplates = (data.documentTemplates ?? [])
+    .filter((template) => template.categoryId === problemCase.categoryId && template.isActive)
+    .map((template) => ({
+      id: template.id,
+      title: template.title,
+      type: template.type,
+      variables: template.variables
+    }));
+
   return {
     ...problemCase,
     category,
+    availableTemplates,
+    completeness: evaluateCaseCompleteness(problemCase, data.documentTemplates ?? []),
     progress: {
       done: problemCase.steps.filter((step) => step.status === STEP_STATUS.DONE).length,
       total: problemCase.steps.length,
@@ -81,6 +93,15 @@ export function enrichCase(problemCase, data) {
     auditLog: (data.auditLogs ?? [])
       .filter((entry) => entry.caseId === problemCase.id)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+    comments: (data.caseComments ?? [])
+      .filter((comment) => comment.caseId === problemCase.id)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .map((comment) => ({
+        ...comment,
+        author: data.users.find((user) => user.id === comment.authorId)
+          ? { id: comment.authorId, fullName: data.users.find((user) => user.id === comment.authorId).fullName }
+          : null
+      })),
     documents: (problemCase.documents ?? [])
       .map((documentId) => data.generatedDocuments.find((document) => document.id === documentId))
       .filter(Boolean)

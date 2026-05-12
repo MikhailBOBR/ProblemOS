@@ -375,6 +375,27 @@ function renderWorkflowActions(item) {
   `;
 }
 
+function renderCompleteness(item) {
+  const completeness = item.completeness;
+  if (!completeness) return "";
+
+  const missing = [
+    ...(completeness.missingFacts || []).map((entry) => entry.label),
+    ...(completeness.missingEvidence || []).map((entry) => entry.label)
+  ];
+
+  return `
+    <div class="readiness">
+      <div class="readiness-head">
+        <strong>Готовность дела: ${completeness.score}%</strong>
+        <span class="status ${completeness.readyForDocument ? "success" : "warning"}">${completeness.readyForDocument ? "можно формировать" : "нужно дополнить"}</span>
+      </div>
+      <div class="progress"><span style="width:${completeness.score}%"></span></div>
+      <div class="hint">${missing.length ? `Не хватает: ${missing.map(escapeHtml).join(", ")}` : "Основные факты и доказательства собраны."}</div>
+    </div>
+  `;
+}
+
 function renderCaseDetails(item) {
   const status = getStatus(item.status);
   const category = item.category || state.categories.find((categoryItem) => categoryItem.id === item.categoryId);
@@ -382,8 +403,8 @@ function renderCaseDetails(item) {
   return `
     <div class="toolbar" style="margin-bottom:16px">
       <button class="btn ghost" data-action="back-to-cases">Назад</button>
-      <a class="btn ghost" href="/api/cases/${item.id}/package" data-download-package="${item.id}">Скачать пакет дела</a>
-      <button class="btn primary" data-generate-doc="${item.id}">Сформировать документ</button>
+      <a class="btn ghost" href="/api/cases/${item.id}/package" data-download-package="${item.id}">Пакет MD</a>
+      <a class="btn ghost" href="/api/cases/${item.id}/package?format=zip" data-download-package="${item.id}">Пакет ZIP</a>
     </div>
     <section class="split">
       <div class="grid">
@@ -396,6 +417,7 @@ function renderCaseDetails(item) {
             <span class="status ${status.tone || "muted"}">${escapeHtml(status.label)}</span>
           </div>
           <div class="notice" style="margin-top:14px">${escapeHtml(item.nextAction)}</div>
+          ${renderCompleteness(item)}
           ${renderWorkflowActions(item)}
         </div>
         <div class="panel">
@@ -441,6 +463,12 @@ function renderCaseDetails(item) {
         </div>
         <div class="panel">
           <h2 class="section-title">Документы</h2>
+          <form class="toolbar" data-document-form="${item.id}" style="margin-bottom:14px">
+            <select name="templateId" class="template-select">
+              ${(item.availableTemplates || []).map((template) => `<option value="${template.id}">${escapeHtml(template.title)}</option>`).join("")}
+            </select>
+            <button class="btn primary" type="submit">Сформировать</button>
+          </form>
           ${
             item.documents?.length
               ? item.documents.map((doc) => `
@@ -450,13 +478,39 @@ function renderCaseDetails(item) {
                       <div class="line-title">${escapeHtml(doc.title)}</div>
                       <div class="line-subtitle">${formatDate(doc.createdAt)}</div>
                     </div>
-                    <a class="btn ghost" href="/api/documents/${doc.id}/download" data-download-doc="${doc.id}">Скачать RTF</a>
+                    <div class="toolbar">
+                      <a class="btn ghost" href="/api/documents/${doc.id}/download?format=rtf" data-download-doc="${doc.id}">RTF</a>
+                      <a class="btn ghost" href="/api/documents/${doc.id}/download?format=docx" data-download-doc="${doc.id}">DOCX</a>
+                      <a class="btn ghost" href="/api/documents/${doc.id}/download?format=pdf" data-download-doc="${doc.id}">PDF</a>
+                    </div>
                   </div>
                   <pre class="document-preview">${escapeHtml(doc.content)}</pre>
                 </div>
               `).join("")
               : `<div class="hint">Документы еще не сформированы.</div>`
           }
+        </div>
+        <div class="panel">
+          <h2 class="section-title">Комментарии</h2>
+          <form class="form" data-comment-form="${item.id}">
+            <div class="field">
+              <label>Новый комментарий</label>
+              <textarea name="text" placeholder="Внутренняя заметка, ответ эксперта или уточнение по делу"></textarea>
+            </div>
+            <button class="btn primary" type="submit">Добавить комментарий</button>
+          </form>
+          <div class="timeline" style="margin-top:14px">
+            ${
+              item.comments?.length
+                ? item.comments.map((comment) => `
+                  <div class="line-item">
+                    <div class="line-title">${escapeHtml(comment.author?.fullName || "Пользователь")} - ${formatDate(comment.createdAt)}</div>
+                    <div class="line-subtitle">${escapeHtml(comment.text)}</div>
+                  </div>
+                `).join("")
+                : `<div class="hint">Комментариев пока нет.</div>`
+            }
+          </div>
         </div>
       </div>
       <aside class="grid">
@@ -591,7 +645,11 @@ function renderDocuments() {
                   <h3 class="case-title">${escapeHtml(doc.title)}</h3>
                   <p class="case-description">${escapeHtml(doc.caseTitle)} - ${formatDate(doc.createdAt)}</p>
                 </div>
-                <a class="btn ghost" href="/api/documents/${doc.id}/download" data-download-doc="${doc.id}">Скачать RTF</a>
+                <div class="toolbar">
+                  <a class="btn ghost" href="/api/documents/${doc.id}/download?format=rtf" data-download-doc="${doc.id}">RTF</a>
+                  <a class="btn ghost" href="/api/documents/${doc.id}/download?format=docx" data-download-doc="${doc.id}">DOCX</a>
+                  <a class="btn ghost" href="/api/documents/${doc.id}/download?format=pdf" data-download-doc="${doc.id}">PDF</a>
+                </div>
               </div>
             </article>
           `).join("")
@@ -748,11 +806,17 @@ function bindViewEvents() {
   document.querySelector("#evidence-form")?.addEventListener("submit", uploadEvidence);
   document.querySelector("#profile-form")?.addEventListener("submit", saveProfile);
 
-  document.querySelectorAll("[data-generate-doc]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await api(`/api/cases/${button.dataset.generateDoc}/documents/generate`, {
+  document.querySelectorAll("[data-comment-form]").forEach((form) => {
+    form.addEventListener("submit", addComment);
+  });
+
+  document.querySelectorAll("[data-document-form]").forEach((form) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      await api(`/api/cases/${form.dataset.documentForm}/documents/generate`, {
         method: "POST",
-        body: JSON.stringify({})
+        body: JSON.stringify({ templateId: data.get("templateId") })
       });
       await refreshAll();
     });
@@ -894,6 +958,19 @@ async function saveTemplate(event) {
       body: form.get("body"),
       isActive: form.get("isActive") === "true"
     })
+  });
+  await refreshAll();
+}
+
+async function addComment(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const text = String(form.get("text") || "").trim();
+  if (!text) return;
+
+  await api(`/api/cases/${event.currentTarget.dataset.commentForm}/comments`, {
+    method: "POST",
+    body: JSON.stringify({ text })
   });
   await refreshAll();
 }

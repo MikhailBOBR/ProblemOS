@@ -115,14 +115,45 @@ test("core user flow: register, create case, evidence, document, package", async
   assert.equal(evidenceDownload.status, 200);
   assert.equal(await evidenceDownload.text(), "hello");
 
+  const completeness = await api(baseUrl, `/api/cases/${caseId}/completeness`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(completeness.response.status, 200);
+  assert.ok(completeness.body.item.score >= 40);
+  assert.ok(completeness.body.item.activeTemplates.length >= 1);
+
+  const documentOptions = await api(baseUrl, `/api/cases/${caseId}/documents`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(documentOptions.response.status, 200);
+  assert.ok(documentOptions.body.templates.length >= 1);
+
   const generated = await api(baseUrl, `/api/cases/${caseId}/documents/generate`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify({})
+    body: JSON.stringify({ templateId: documentOptions.body.templates[0].id })
   });
 
   assert.equal(generated.response.status, 201);
   assert.ok(generated.body.item.content.includes("ПРЕТЕНЗИЯ"));
+
+  const rtf = await fetch(`${baseUrl}/api/documents/${generated.body.item.id}/download?format=rtf`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(rtf.status, 200);
+  assert.equal((await rtf.text()).startsWith("{\\rtf"), true);
+
+  const docx = await fetch(`${baseUrl}/api/documents/${generated.body.item.id}/download?format=docx`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(docx.status, 200);
+  assert.equal(Buffer.from(await docx.arrayBuffer()).subarray(0, 2).toString("utf8"), "PK");
+
+  const pdf = await fetch(`${baseUrl}/api/documents/${generated.body.item.id}/download?format=pdf`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(pdf.status, 200);
+  assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 4).toString("utf8"), "%PDF");
 
   const sent = await api(baseUrl, `/api/cases/${caseId}/actions`, {
     method: "POST",
@@ -142,13 +173,34 @@ test("core user flow: register, create case, evidence, document, package", async
   assert.equal(escalation.response.status, 200);
   assert.equal(escalation.body.item.status, "escalation");
 
+  const comment = await api(baseUrl, `/api/cases/${caseId}/comments`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ text: "Проверить подтверждение отправки перед эскалацией." })
+  });
+  assert.equal(comment.response.status, 201);
+  assert.equal(comment.body.item.text.includes("подтверждение"), true);
+
+  const comments = await api(baseUrl, `/api/cases/${caseId}/comments`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(comments.response.status, 200);
+  assert.equal(comments.body.items.length, 1);
+
   const list = await api(baseUrl, "/api/cases", {
     headers: { Authorization: `Bearer ${token}` }
   });
 
   assert.equal(list.body.items.length, 1);
   assert.equal(list.body.items[0].documents.length, 1);
+  assert.equal(list.body.items[0].comments.length, 1);
   assert.ok(list.body.items[0].auditLog.length >= 4);
+
+  const filtered = await api(baseUrl, "/api/cases?status=escalation&q=телефон", {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(filtered.response.status, 200);
+  assert.equal(filtered.body.total, 1);
 
   const audit = await api(baseUrl, `/api/cases/${caseId}/audit`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -161,6 +213,28 @@ test("core user flow: register, create case, evidence, document, package", async
   });
   assert.equal(packageResponse.status, 200);
   assert.ok((await packageResponse.text()).includes("Пакет дела"));
+
+  const packageZip = await fetch(`${baseUrl}/api/cases/${caseId}/package?format=zip`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(packageZip.status, 200);
+  assert.equal(Buffer.from(await packageZip.arrayBuffer()).subarray(0, 2).toString("utf8"), "PK");
+
+  const admin = await api(baseUrl, "/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: "admin@problemos.local", password: "admin123" })
+  });
+  const adminUsers = await api(baseUrl, "/api/admin/users", {
+    headers: { Authorization: `Bearer ${admin.body.token}` }
+  });
+  assert.equal(adminUsers.response.status, 200);
+  assert.ok(adminUsers.body.items.some((item) => item.email === "user@example.test"));
+
+  const adminCases = await api(baseUrl, "/api/admin/cases?status=escalation", {
+    headers: { Authorization: `Bearer ${admin.body.token}` }
+  });
+  assert.equal(adminCases.response.status, 200);
+  assert.equal(adminCases.body.total, 1);
 });
 
 test("users cannot read other users cases", async (t) => {

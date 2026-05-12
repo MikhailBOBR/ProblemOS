@@ -4,47 +4,49 @@
 
 ## Текущий этап
 
-Этап 2.2. Стабилизация модели данных под будущий большой стек.
+Этап 2.3. Документы, пакеты дела и расширенный backend API.
 
-Фокус: отдельный audit log, профиль пользователя с Telegram ID, schema-документация и Telegram polling runner.
+Фокус: документы должны выгружаться в нескольких форматах, дело должно скачиваться архивом вместе с доказательствами, а backend должен поддерживать рабочие процессы админа/эксперта.
 
 ## Уже сделано
 
 - Самодостаточный Node.js HTTP API + статический web-интерфейс + JSON storage.
 - Категории MVP: возврат товара, ЖКХ, некачественная услуга.
-- Регистрация, вход, роли, дела, доказательства, документы, уведомления, админка.
-- Генерация RTF-документов по шаблонам.
-- Пакет дела в Markdown.
+- Регистрация, вход, роли, профиль, привязка Telegram ID.
+- Дела, статусы, workflow actions, доказательства, документы, уведомления.
 - Файловое хранилище доказательств в `server/data/uploads`.
-- Проверка MIME-типов, лимит размера, безопасные имена файлов, SHA-256 и защищенное скачивание `/api/evidence/:id/download`.
-- `workflowService` и API `/api/cases/:id/actions`.
-- Workflow-действия: `complete_current_step`, `mark_sent`, `mark_deadline_missed`, `start_escalation`, `close_case`, `reopen_case`.
-- Telegram API `/api/telegram/link` и `/api/telegram/webhook`.
-- Telegram-команды `/start`, `/help`, `/mycases`, `/next`, `/newcase описание`.
+- SHA-256, MIME-проверки, лимиты, безопасные имена файлов.
+- Audit log как отдельная коллекция `auditLogs`.
+- Telegram webhook и polling runner через `TELEGRAM_BOT_TOKEN`.
+- PostgreSQL/Django-compatible схема в `docs/DATA_SCHEMA.md`.
 
 ## Сделано в текущем шаге
 
-- Добавлен `auditLogService` и отдельная коллекция `auditLogs`.
-- Store получил нормализацию старых JSON-данных: новые поля добавляются без ручной миграции.
-- Audit log пишется для регистрации, входа, обновления профиля, создания дела, загрузки доказательства, генерации документа, workflow-действий, Telegram-действий и правки шаблонов.
-- Добавлены API `/api/cases/:id/audit` и `/api/admin/audit`.
-- Добавлен профиль пользователя в web-интерфейсе.
-- Добавлен API `/api/me/profile` для ФИО, телефона и Telegram ID.
-- Telegram handler вынесен в `telegramService`, чтобы его использовали webhook и polling runner.
-- Добавлен `server/src/telegram/pollingRunner.js` для запуска через `TELEGRAM_BOT_TOKEN`.
-- Админка шаблонов показывает переменные `{{...}}` и подсказку по заполнению.
-- Добавлен `docs/DATA_SCHEMA.md` с PostgreSQL/Django-compatible схемой.
-- Расширены тесты профилем и audit log.
+- Добавлен ZIP writer без внешних зависимостей.
+- Добавлен DOCX exporter без внешних зависимостей.
+- Добавлен простой PDF exporter.
+- `/api/documents/:id/download?format=rtf|docx|pdf`.
+- `/api/cases/:id/package?format=zip` собирает архив дела.
+- ZIP-пакет включает `summary.md`, timeline, audit log, индекс документов, индекс доказательств, RTF-документы и реальные файлы доказательств.
+- Добавлен `completenessService`.
+- `/api/cases/:id/completeness` показывает готовность дела, недостающие факты, доказательства и доступные шаблоны.
+- Карточка дела показывает готовность, недостающие данные, выбор шаблона и скачивание RTF/DOCX/PDF.
+- Добавлены комментарии по делу: `/api/cases/:id/comments`.
+- Комментарии отображаются в карточке дела и пишутся в audit log.
+- Добавлены фильтры `/api/cases?status=&categoryId=&priority=&q=`.
+- Добавлены админские списки `/api/admin/users` и `/api/admin/cases`.
+- Расширены тесты на DOCX/PDF/ZIP, completeness, комментарии, фильтры и админские endpoints.
 
 ## Ближайший следующий шаг
 
-Этап 2.3. Документы и пакеты дела:
+Этап 2.4. Уведомления, фоновые задачи и production-hardening:
 
-1. Сделать настоящий DOCX exporter без внешних зависимостей или через легкую библиотеку после установки зависимостей.
-2. Добавить PDF export как второй формат.
-3. Сформировать ZIP-пакет дела: описание, timeline, audit, документы и файлы доказательств.
-4. Добавить выбор шаблона при генерации документа в UI.
-5. Добавить предпросмотр полноты дела: каких фактов и доказательств не хватает перед документом.
+1. Добавить scheduler для дедлайнов: генерация уведомлений по срокам.
+2. Добавить read/unread UX и массовое прочтение уведомлений.
+3. Добавить Telegram-отправку уведомлений по дедлайнам.
+4. Добавить rate limit для auth/API.
+5. Добавить backup/export JSON storage и health diagnostics.
+6. Подготовить Dockerfile/docker-compose.
 
 ## Принцип развития
 

@@ -13,6 +13,7 @@ function normalizeData(data) {
   data.notifications = data.notifications ?? [];
   data.botSessions = data.botSessions ?? [];
   data.auditLogs = data.auditLogs ?? [];
+  data.caseComments = data.caseComments ?? [];
 
   for (const user of data.users) {
     user.phone = user.phone ?? "";

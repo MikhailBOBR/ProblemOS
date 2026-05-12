@@ -75,6 +75,7 @@ export function createSeedData() {
     ],
     documentTemplates: DOCUMENT_TEMPLATES,
     generatedDocuments: [],
+    caseComments: [],
     notifications: [
       {
         id: createId("notification"),
