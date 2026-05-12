@@ -3,6 +3,7 @@ import { requireAdmin, requireUser } from "../http/requestContext.js";
 import { matchPath } from "../http/routing.js";
 import { createRepositories } from "../repositories/index.js";
 import { parseAdminTemplateRequest, parseTemplateRestoreRequest } from "../dto/requestDtos.js";
+import { presentItem, presentList } from "../presenters/responsePresenters.js";
 import { createHttpError, sendJson } from "../utils/http.js";
 
 export async function handleAdminTemplateRoutes(req, res, store, { pathname, method }) {
@@ -10,7 +11,7 @@ export async function handleAdminTemplateRoutes(req, res, store, { pathname, met
     const { data, user } = await requireUser(req, store);
     requireAdmin(user);
     const repos = createRepositories(data);
-    sendJson(res, 200, { items: repos.documentTemplates.list(), categories: repos.categories.list() });
+    sendJson(res, 200, presentList(repos.documentTemplates.list(), { categories: repos.categories.list() }));
     return true;
   }
 
@@ -22,7 +23,7 @@ export async function handleAdminTemplateRoutes(req, res, store, { pathname, met
     if (!template) {
       throw createHttpError(404, "Template not found");
     }
-    sendJson(res, 200, { template, items: getTemplateVersions(data, template.id) });
+    sendJson(res, 200, presentList(getTemplateVersions(data, template.id), { template }));
     return true;
   }
 
@@ -40,7 +41,7 @@ export async function handleAdminTemplateRoutes(req, res, store, { pathname, met
       if (!version) {
         throw createHttpError(404, "Template version not found");
       }
-      return { item: restoreTemplateVersion(data, template, version, user.id), versions: getTemplateVersions(data, template.id) };
+      return presentItem(restoreTemplateVersion(data, template, version, user.id), { versions: getTemplateVersions(data, template.id) });
     });
     sendJson(res, 200, result);
     return true;
@@ -57,7 +58,7 @@ export async function handleAdminTemplateRoutes(req, res, store, { pathname, met
       if (!template) {
         throw createHttpError(404, "Шаблон не найден");
       }
-      return { item: updateTemplateFromInput(data, template, body, user.id), versions: getTemplateVersions(data, template.id) };
+      return presentItem(updateTemplateFromInput(data, template, body, user.id), { versions: getTemplateVersions(data, template.id) });
     });
 
     sendJson(res, 200, result);

@@ -11,6 +11,7 @@ ProblemOS
 │   │   ├── dto             request DTO parsing and normalization
 │   │   ├── http            request context, routing helpers, validation
 │   │   ├── repositories    JSON repository boundary, future PostgreSQL adapter point
+│   │   ├── presenters      response envelope builders
 │   │   ├── routes          API route groups and admin subgroups
 │   │   ├── services        business behavior
 │   │   ├── telegram        bot adapter skeleton
@@ -41,10 +42,12 @@ Free text problem
 - `dto/*` owns request normalization.
 - `http/*` owns request context, validation and shared routing primitives.
 - `repositories/*` owns data access contracts. The current implementation wraps JSON data; PostgreSQL repositories should mirror these methods.
+- `presenters/*` owns stable response envelopes such as `{ item }`, `{ items, total }` and auth sessions.
 - `routes/*` owns HTTP route orchestration and stays thin.
 - `services/*` owns business behavior.
 - `index.js` composes route modules, rate limiting, static serving and startup.
 - `web/*` is intentionally thin and uses API state.
+- `web/apiClient.js` is the browser-side API boundary. New UI code should prefer client methods over raw endpoint strings.
 - `audit_logs` is the append-only operational history for future admin review and migrations.
 - `timeline` remains user-facing case history; `audit_logs` remains system-facing traceability.
 

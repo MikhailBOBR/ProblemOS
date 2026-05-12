@@ -2,6 +2,7 @@ import { appendAuditLog } from "../services/auditLogService.js";
 import { requireUser } from "../http/requestContext.js";
 import { createRepositories } from "../repositories/index.js";
 import { parseLoginRequest, parseProfileRequest, parseRegisterRequest } from "../dto/requestDtos.js";
+import { presentAuthSession, presentUser } from "../presenters/responsePresenters.js";
 import { createId } from "../utils/id.js";
 import { createSessionToken, hashPassword, sanitizeUser, verifyPassword } from "../utils/security.js";
 import { createHttpError, sendJson } from "../utils/http.js";
@@ -36,7 +37,7 @@ export async function handleAuthRoutes(req, res, store, { pathname, method }) {
         action: "user.registered",
         title: "Пользователь зарегистрировался"
       });
-      return { token, user: sanitizeUser(user) };
+      return presentAuthSession(token, sanitizeUser(user));
     });
 
     sendJson(res, 201, result);
@@ -61,7 +62,7 @@ export async function handleAuthRoutes(req, res, store, { pathname, method }) {
         action: "user.login",
         title: "Пользователь вошел в систему"
       });
-      return { token, user: sanitizeUser(user) };
+      return presentAuthSession(token, sanitizeUser(user));
     });
 
     sendJson(res, 200, result);
@@ -70,7 +71,7 @@ export async function handleAuthRoutes(req, res, store, { pathname, method }) {
 
   if (method === "GET" && pathname === "/api/me") {
     const { user } = await requireUser(req, store);
-    sendJson(res, 200, { user: sanitizeUser(user) });
+    sendJson(res, 200, presentUser(sanitizeUser(user)));
     return true;
   }
 
@@ -94,7 +95,7 @@ export async function handleAuthRoutes(req, res, store, { pathname, method }) {
         title: "Профиль обновлен",
         details: { hasTelegram: Boolean(freshUser.telegramId), hasPhone: Boolean(freshUser.phone) }
       });
-      return { user: sanitizeUser(freshUser) };
+      return presentUser(sanitizeUser(freshUser));
     });
 
     sendJson(res, 200, result);

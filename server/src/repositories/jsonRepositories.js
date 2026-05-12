@@ -45,8 +45,24 @@ export function createJsonRepositories(data) {
       list() {
         return data.cases;
       },
+      listForUser(userId) {
+        return data.cases.filter((item) => item.userId === userId);
+      },
+      listForExpert(expertId) {
+        return data.cases.filter((item) => item.expertId === expertId);
+      },
       findById(id) {
         return data.cases.find((item) => item.id === id) ?? null;
+      },
+      countEvidence() {
+        return data.cases.reduce((sum, item) => sum + (item.evidence?.length ?? 0), 0);
+      },
+      countByStatus(statusIds = []) {
+        const result = Object.fromEntries(statusIds.map((statusId) => [statusId, 0]));
+        for (const item of data.cases) {
+          result[item.status] = (result[item.status] ?? 0) + 1;
+        }
+        return result;
       },
       create(problemCase) {
         data.cases.push(problemCase);
@@ -122,6 +138,9 @@ export function createJsonRepositories(data) {
     auditLogs: {
       list() {
         return data.auditLogs;
+      },
+      listRecent(limit = 200) {
+        return [...data.auditLogs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, limit);
       }
     },
 
@@ -136,6 +155,26 @@ export function createJsonRepositories(data) {
       create(recommendation) {
         data.expertRecommendations.push(recommendation);
         return recommendation;
+      }
+    },
+
+    metrics: {
+      platformCounts(statusIds = []) {
+        return {
+          users: data.users.length,
+          cases: data.cases.length,
+          documents: data.generatedDocuments.length,
+          evidence: data.cases.reduce((sum, item) => sum + (item.evidence?.length ?? 0), 0),
+          auditLogs: data.auditLogs.length,
+          byStatus: Object.fromEntries(
+            Object.entries(
+              data.cases.reduce((acc, item) => {
+                acc[item.status] = (acc[item.status] ?? 0) + 1;
+                return acc;
+              }, Object.fromEntries(statusIds.map((statusId) => [statusId, 0])))
+            )
+          )
+        };
       }
     }
   };

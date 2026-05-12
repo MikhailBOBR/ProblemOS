@@ -4,7 +4,9 @@ import { analyzeProblem } from "../services/aiService.js";
 import { buildApiDocs } from "../services/apiDocsService.js";
 import { buildDiagnostics } from "../services/diagnosticsService.js";
 import { requireAdmin, requireUser } from "../http/requestContext.js";
+import { createRepositories } from "../repositories/index.js";
 import { parseTextRequest } from "../dto/requestDtos.js";
+import { presentCategories } from "../presenters/responsePresenters.js";
 import { sendJson } from "../utils/http.js";
 
 export async function handleSystemRoutes(req, res, store, { pathname, method, uploadRoot, startedAt }) {
@@ -27,7 +29,8 @@ export async function handleSystemRoutes(req, res, store, { pathname, method, up
 
   if (method === "GET" && pathname === "/api/categories") {
     const data = await store.read();
-    sendJson(res, 200, { items: data.categories ?? CATEGORIES, statuses: CASE_STATUS_META });
+    const categories = createRepositories(data).categories.list();
+    sendJson(res, 200, presentCategories(categories.length ? categories : CATEGORIES, CASE_STATUS_META));
     return true;
   }
 

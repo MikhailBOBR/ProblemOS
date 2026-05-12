@@ -3,13 +3,14 @@ import { requireAdmin, requireUser } from "../http/requestContext.js";
 import { matchPath } from "../http/routing.js";
 import { createRepositories } from "../repositories/index.js";
 import { parseAdminCategoryRequest } from "../dto/requestDtos.js";
+import { presentItem, presentList } from "../presenters/responsePresenters.js";
 import { createHttpError, sendJson } from "../utils/http.js";
 
 export async function handleAdminCategoryRoutes(req, res, store, { pathname, method }) {
   if (method === "GET" && pathname === "/api/admin/categories") {
     const { data, user } = await requireUser(req, store);
     requireAdmin(user);
-    sendJson(res, 200, { items: createRepositories(data).categories.list() });
+    sendJson(res, 200, presentList(createRepositories(data).categories.list()));
     return true;
   }
 
@@ -23,7 +24,7 @@ export async function handleAdminCategoryRoutes(req, res, store, { pathname, met
       if (!category) {
         throw createHttpError(404, "Category not found");
       }
-      return { item: updateCategoryPlaybook(data, category, body, user.id) };
+      return presentItem(updateCategoryPlaybook(data, category, body, user.id));
     });
     sendJson(res, 200, result);
     return true;

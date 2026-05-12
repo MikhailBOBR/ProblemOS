@@ -4,27 +4,18 @@ import { buildPostgresMigrationSql } from "../services/postgresMigrationService.
 import { runDeadlineScheduler } from "../services/schedulerService.js";
 import { dispatchTelegramNotifications } from "../services/telegramDeliveryService.js";
 import { requireAdmin, requireUser } from "../http/requestContext.js";
+import { createRepositories } from "../repositories/index.js";
 import { optionalString, readJsonObject } from "../http/validation.js";
+import { presentList } from "../presenters/responsePresenters.js";
 import { sendJson, sendText } from "../utils/http.js";
 
 export async function handleAdminOpsRoutes(req, res, store, { pathname, method, backupRoot }) {
   if (method === "GET" && pathname === "/api/admin/stats") {
     const { data, user } = await requireUser(req, store);
     requireAdmin(user);
+    const repos = createRepositories(data);
 
-    const byStatus = Object.fromEntries(CASE_STATUS_META.map((status) => [status.id, 0]));
-    for (const item of data.cases) {
-      byStatus[item.status] = (byStatus[item.status] ?? 0) + 1;
-    }
-
-    sendJson(res, 200, {
-      users: data.users.length,
-      cases: data.cases.length,
-      documents: data.generatedDocuments.length,
-      evidence: data.cases.reduce((sum, item) => sum + (item.evidence?.length ?? 0), 0),
-      auditLogs: data.auditLogs.length,
-      byStatus
-    });
+    sendJson(res, 200, repos.metrics.platformCounts(CASE_STATUS_META.map((status) => status.id)));
     return true;
   }
 
@@ -84,9 +75,7 @@ export async function handleAdminOpsRoutes(req, res, store, { pathname, method, 
   if (method === "GET" && pathname === "/api/admin/audit") {
     const { data, user } = await requireUser(req, store);
     requireAdmin(user);
-    sendJson(res, 200, {
-      items: [...data.auditLogs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 200)
-    });
+    sendJson(res, 200, presentList(createRepositories(data).auditLogs.listRecent(200)));
     return true;
   }
 

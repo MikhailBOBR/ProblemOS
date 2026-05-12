@@ -5,6 +5,7 @@ import { requireAdmin, requireUser } from "../http/requestContext.js";
 import { filterCases, matchPath, replaceCase } from "../http/routing.js";
 import { createRepositories } from "../repositories/index.js";
 import { parseAssignExpertRequest } from "../dto/requestDtos.js";
+import { presentItem, presentList } from "../presenters/responsePresenters.js";
 import { sanitizeUser } from "../utils/security.js";
 import { createHttpError, sendJson } from "../utils/http.js";
 
@@ -19,7 +20,7 @@ export async function handleAdminCaseRoutes(req, res, store, { pathname, method,
         owner: sanitizeUser(repos.users.findById(item.userId))
       }))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-    sendJson(res, 200, { items, total: items.length });
+    sendJson(res, 200, presentList(items));
     return true;
   }
 
@@ -44,7 +45,7 @@ export async function handleAdminCaseRoutes(req, res, store, { pathname, method,
       }
       const nextCase = assignExpertToCase(data, problemCase, expertId, user.id);
       replaceCase(data, nextCase);
-      return { item: enrichCase(nextCase, data, user) };
+      return presentItem(enrichCase(nextCase, data, user));
     });
 
     sendJson(res, 200, result);

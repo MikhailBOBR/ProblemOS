@@ -5,6 +5,7 @@ import { assertCaseEdit } from "../services/rbacService.js";
 import { findEvidenceForUser, getCaseForUser, requireUser } from "../http/requestContext.js";
 import { matchPath, replaceCase } from "../http/routing.js";
 import { parseEvidenceUploadRequest } from "../dto/requestDtos.js";
+import { presentItem } from "../presenters/responsePresenters.js";
 import { createId } from "../utils/id.js";
 import { sendJson } from "../utils/http.js";
 
@@ -37,7 +38,7 @@ export async function handleEvidenceRoutes(req, res, store, { pathname, method, 
         title: "Доказательство загружено",
         details: { evidenceType: evidence.evidenceType, hasFile: evidence.hasFile, fileHash: evidence.fileHash }
       });
-      return { item: evidence, case: enrichCase(next, data, user) };
+      return presentItem(evidence, { case: enrichCase(next, data, user) });
     });
 
     sendJson(res, 201, result);

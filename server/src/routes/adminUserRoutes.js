@@ -4,6 +4,7 @@ import { requireAdmin, requireUser } from "../http/requestContext.js";
 import { matchPath } from "../http/routing.js";
 import { createRepositories } from "../repositories/index.js";
 import { parseAdminRoleRequest } from "../dto/requestDtos.js";
+import { presentItem, presentList } from "../presenters/responsePresenters.js";
 import { sanitizeUser } from "../utils/security.js";
 import { createHttpError, sendJson } from "../utils/http.js";
 
@@ -16,13 +17,13 @@ export async function handleAdminUserRoutes(req, res, store, { pathname, method 
     for (const problemCase of repos.cases.list()) {
       caseCounts.set(problemCase.userId, (caseCounts.get(problemCase.userId) ?? 0) + 1);
     }
-    sendJson(res, 200, {
-      items: repos.users.list().map((item) => ({
+    sendJson(res, 200, presentList(
+      repos.users.list().map((item) => ({
         ...sanitizeUser(item),
         casesCount: caseCounts.get(item.id) ?? 0,
         telegramLinked: Boolean(item.telegramId)
       }))
-    });
+    ));
     return true;
   }
 
@@ -50,7 +51,7 @@ export async function handleAdminUserRoutes(req, res, store, { pathname, method 
         title: "User role updated",
         details: { role: nextRole }
       });
-      return { item: sanitizeUser(targetUser) };
+      return presentItem(sanitizeUser(targetUser));
     });
 
     sendJson(res, 200, result);

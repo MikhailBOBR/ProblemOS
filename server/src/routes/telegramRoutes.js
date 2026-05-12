@@ -4,6 +4,7 @@ import { requireUser } from "../http/requestContext.js";
 import { parseTelegramLinkRequest, parseTextRequest } from "../dto/requestDtos.js";
 import { createRepositories } from "../repositories/index.js";
 import { readJsonObject } from "../http/validation.js";
+import { presentUser } from "../presenters/responsePresenters.js";
 import { createBotDraftFromMessage } from "../telegram/botAdapter.js";
 import { sanitizeUser } from "../utils/security.js";
 import { sendJson } from "../utils/http.js";
@@ -33,7 +34,7 @@ export async function handleTelegramRoutes(req, res, store, { pathname, method }
         title: "Telegram ID привязан",
         details: { telegramId }
       });
-      return { user: sanitizeUser(freshUser) };
+      return presentUser(sanitizeUser(freshUser));
     });
 
     sendJson(res, 200, result);

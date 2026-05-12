@@ -8,6 +8,7 @@ import { getCaseForUser, requireUser } from "../http/requestContext.js";
 import { getTemplatesForCategory, matchPath, replaceCase, sendBuffer } from "../http/routing.js";
 import { createRepositories } from "../repositories/index.js";
 import { parseDocumentGenerateRequest } from "../dto/requestDtos.js";
+import { presentItem, presentList } from "../presenters/responsePresenters.js";
 import { createHttpError, sendJson, sendText } from "../utils/http.js";
 
 export async function handleDocumentRoutes(req, res, store, { pathname, method, url, uploadRoot }) {
@@ -17,7 +18,7 @@ export async function handleDocumentRoutes(req, res, store, { pathname, method, 
     const repos = createRepositories(data);
     const problemCase = getCaseForUser(data, user, caseDocumentsParams.id);
     const documents = repos.generatedDocuments.listByCaseDocumentIds(problemCase.documents);
-    sendJson(res, 200, { items: documents, templates: getTemplatesForCategory(data, problemCase.categoryId) });
+    sendJson(res, 200, presentList(documents, { templates: getTemplatesForCategory(data, problemCase.categoryId) }));
     return true;
   }
 
@@ -51,7 +52,7 @@ export async function handleDocumentRoutes(req, res, store, { pathname, method, 
         title: "Документ сформирован",
         details: { templateId: template.id, title: document.title }
       });
-      return { item: document, case: enrichCase(nextCase, data, user) };
+      return presentItem(document, { case: enrichCase(nextCase, data, user) });
     });
 
     sendJson(res, 201, result);

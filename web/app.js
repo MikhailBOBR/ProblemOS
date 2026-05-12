@@ -1,3 +1,5 @@
+import { createApiClient } from "./apiClient.js";
+
 const app = document.querySelector("#app");
 
 const state = {
@@ -23,6 +25,8 @@ const state = {
   adminAnalytics: null,
   expertAnalytics: null
 };
+
+const client = createApiClient({ getToken: () => state.token });
 
 const statusTone = {
   draft: "muted",
@@ -54,26 +58,6 @@ function getStatus(status) {
   return state.statuses.find((item) => item.id === status) || { label: status, tone: statusTone[status] || "muted" };
 }
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-      ...(options.headers || {})
-    }
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-  const body = contentType.includes("application/json") ? await response.json() : await response.text();
-
-  if (!response.ok) {
-    throw new Error(body.error || body || "Ошибка запроса");
-  }
-
-  return body;
-}
-
 function setSession(payload) {
   state.token = payload.token;
   state.user = payload.user;
@@ -89,39 +73,39 @@ function clearSession() {
 }
 
 async function loadBase() {
-  const categories = await api("/api/categories");
+  const categories = await client.system.categories();
   state.categories = categories.items;
   state.statuses = categories.statuses;
 }
 
 async function loadCases() {
-  const payload = await api("/api/cases");
+  const payload = await client.cases.list();
   state.cases = payload.items;
 }
 
 async function loadNotifications() {
-  const payload = await api("/api/notifications");
+  const payload = await client.notifications.list();
   state.notifications = payload.items;
 }
 
 async function loadAnalytics() {
   if (!state.user) return;
-  state.userAnalytics = await api("/api/me/analytics");
+  state.userAnalytics = await client.analytics.me();
   if (["admin", "expert"].includes(state.user.role)) {
-    state.expertAnalytics = await api("/api/expert/analytics");
+    state.expertAnalytics = await client.analytics.expert();
   }
 }
 
 async function loadAdmin() {
   if (state.user?.role !== "admin") return;
   const [stats, analytics, diagnostics, templates, users, cases, categories] = await Promise.all([
-    api("/api/admin/stats"),
-    api("/api/admin/analytics"),
-    api("/api/diagnostics"),
-    api("/api/admin/templates"),
-    api("/api/admin/users"),
-    api("/api/admin/cases"),
-    api("/api/admin/categories")
+    client.admin.stats(),
+    client.analytics.admin(),
+    client.system.diagnostics(),
+    client.admin.templates(),
+    client.admin.users(),
+    client.admin.cases(),
+    client.admin.categories()
   ]);
   state.adminStats = stats;
   state.adminAnalytics = analytics;
@@ -136,7 +120,7 @@ async function bootstrap() {
   try {
     await loadBase();
     if (state.token) {
-      const me = await api("/api/me");
+      const me = await client.auth.me();
       state.user = me.user;
       localStorage.setItem("problemos.user", JSON.stringify(state.user));
       await Promise.all([loadCases(), loadNotifications(), loadAnalytics(), loadAdmin()]);
@@ -280,14 +264,12 @@ async function onAuthSubmit(event) {
   error.textContent = "";
 
   try {
-    const payload = await api(state.authMode === "register" ? "/api/auth/register" : "/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({
-        email: form.get("email"),
-        password: form.get("password"),
-        fullName: form.get("fullName")
-      })
-    });
+    const credentials = {
+      email: form.get("email"),
+      password: form.get("password"),
+      fullName: form.get("fullName")
+    };
+    const payload = state.authMode === "register" ? await client.auth.register(credentials) : await client.auth.login(credentials);
     setSession(payload);
     await Promise.all([loadCases(), loadNotifications(), loadAnalytics(), loadAdmin()]);
     render();
@@ -1107,20 +1089,14 @@ function bindViewEvents() {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const data = new FormData(form);
-      await api(`/api/cases/${form.dataset.documentForm}/documents/generate`, {
-        method: "POST",
-        body: JSON.stringify({ templateId: data.get("templateId") })
-      });
+      await client.cases.generateDocument(form.dataset.documentForm, { templateId: data.get("templateId") });
       await refreshAll();
     });
   });
 
   document.querySelectorAll("[data-case-action]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await api(`/api/cases/${button.dataset.caseId}/actions`, {
-        method: "POST",
-        body: JSON.stringify({ action: button.dataset.caseAction })
-      });
+      await client.cases.action(button.dataset.caseId, { action: button.dataset.caseAction });
       await refreshAll();
     });
   });
@@ -1161,26 +1137,26 @@ async function refreshAll() {
 }
 
 async function markNotificationRead(id) {
-  await api(`/api/notifications/${id}/read`, { method: "PATCH" });
+  await client.notifications.read(id);
   await refreshAll();
 }
 
 async function markAllNotificationsRead() {
-  await api("/api/notifications/read-all", { method: "PATCH" });
+  await client.notifications.readAll();
   await refreshAll();
 }
 
 async function runAdminAction(action) {
   if (action === "run-scheduler") {
-    const result = await api("/api/admin/scheduler/run", { method: "POST", body: JSON.stringify({}) });
+    const result = await client.admin.schedulerRun();
     state.adminMessage = `Scheduler: создано ${result.created.length}, проверено ${result.scannedCases}.`;
   }
   if (action === "dispatch-telegram") {
-    const result = await api("/api/admin/notifications/dispatch", { method: "POST", body: JSON.stringify({ dryRun: true }) });
+    const result = await client.admin.notificationDispatchDryRun();
     state.adminMessage = `Telegram dry-run: кандидатов ${result.attempted.length}, пропущено ${result.skipped.length}.`;
   }
   if (action === "backup") {
-    const result = await api("/api/admin/backup", { method: "POST", body: JSON.stringify({}) });
+    const result = await client.admin.backup();
     state.adminMessage = `Backup создан: ${result.backupFile}`;
   }
   await loadAdmin();
@@ -1190,10 +1166,7 @@ async function runAdminAction(action) {
 async function analyzeNewCase() {
   collectNewCaseDraft();
   const description = state.newCaseDraft.description;
-  state.analysis = await api("/api/ai/analyze", {
-    method: "POST",
-    body: JSON.stringify({ text: description })
-  });
+  state.analysis = await client.system.analyze(description);
   state.newCaseDraft.categoryId = state.analysis.categoryId;
   render();
 }
@@ -1228,13 +1201,10 @@ async function createCase(event) {
   }
 
   try {
-    const payload = await api("/api/cases", {
-      method: "POST",
-      body: JSON.stringify({
-        description: form.get("description"),
-        categoryId: form.get("categoryId"),
-        facts
-      })
+    const payload = await client.cases.create({
+      description: form.get("description"),
+      categoryId: form.get("categoryId"),
+      facts
     });
     await refreshAll();
     state.view = "cases";
@@ -1270,17 +1240,14 @@ async function uploadEvidence(event) {
   }
   const fileData = file && file.size <= 5_500_000 ? await readFileAsDataUrl(file) : "";
 
-  await api(`/api/cases/${event.currentTarget.dataset.caseId}/evidence`, {
-    method: "POST",
-    body: JSON.stringify({
-      evidenceType: form.get("evidenceType"),
-      title: form.get("title") || file?.name || "Доказательство",
-      description: form.get("description"),
-      fileName: file?.name || "",
-      fileType: file?.type || "",
-      fileSize: file?.size || 0,
-      fileData
-    })
+  await client.cases.addEvidence(event.currentTarget.dataset.caseId, {
+    evidenceType: form.get("evidenceType"),
+    title: form.get("title") || file?.name || "Доказательство",
+    description: form.get("description"),
+    fileName: file?.name || "",
+    fileType: file?.type || "",
+    fileSize: file?.size || 0,
+    fileData
   });
 
   await refreshAll();
@@ -1289,13 +1256,10 @@ async function uploadEvidence(event) {
 async function saveTemplate(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  await api(`/api/admin/templates/${event.currentTarget.dataset.templateId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      title: form.get("title"),
-      body: form.get("body"),
-      isActive: form.get("isActive") === "true"
-    })
+  await client.admin.updateTemplate(event.currentTarget.dataset.templateId, {
+    title: form.get("title"),
+    body: form.get("body"),
+    isActive: form.get("isActive") === "true"
   });
   await refreshAll();
 }
@@ -1303,37 +1267,28 @@ async function saveTemplate(event) {
 async function saveUserRole(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  await api(`/api/admin/users/${event.currentTarget.dataset.roleForm}/role`, {
-    method: "PATCH",
-    body: JSON.stringify({ role: form.get("role") })
-  });
+  await client.admin.updateUserRole(event.currentTarget.dataset.roleForm, { role: form.get("role") });
   await refreshAll();
 }
 
 async function assignExpert(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  await api(`/api/admin/cases/${event.currentTarget.dataset.assignExpertForm}/assign-expert`, {
-    method: "PATCH",
-    body: JSON.stringify({ expertId: form.get("expertId") })
-  });
+  await client.admin.assignExpert(event.currentTarget.dataset.assignExpertForm, { expertId: form.get("expertId") });
   await refreshAll();
 }
 
 async function saveCategoryPlaybook(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
-  await api(`/api/admin/categories/${event.currentTarget.dataset.categoryForm}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      name: form.get("name"),
-      description: form.get("description"),
-      defaultDeadlineDays: Number(form.get("defaultDeadlineDays")),
-      route: String(form.get("route") || "")
-        .split("\n")
-        .map((item) => item.trim())
-        .filter(Boolean)
-    })
+  await client.admin.updateCategory(event.currentTarget.dataset.categoryForm, {
+    name: form.get("name"),
+    description: form.get("description"),
+    defaultDeadlineDays: Number(form.get("defaultDeadlineDays")),
+    route: String(form.get("route") || "")
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean)
   });
   await refreshAll();
 }
@@ -1344,10 +1299,7 @@ async function addComment(event) {
   const text = String(form.get("text") || "").trim();
   if (!text) return;
 
-  await api(`/api/cases/${event.currentTarget.dataset.commentForm}/comments`, {
-    method: "POST",
-    body: JSON.stringify({ text })
-  });
+  await client.cases.addComment(event.currentTarget.dataset.commentForm, { text });
   await refreshAll();
 }
 
@@ -1357,13 +1309,10 @@ async function addRecommendation(event) {
   const text = String(form.get("text") || "").trim();
   if (!text) return;
 
-  await api(`/api/cases/${event.currentTarget.dataset.recommendationForm}/recommendations`, {
-    method: "POST",
-    body: JSON.stringify({
-      text,
-      visibility: form.get("visibility"),
-      status: form.get("status")
-    })
+  await client.cases.addRecommendation(event.currentTarget.dataset.recommendationForm, {
+    text,
+    visibility: form.get("visibility"),
+    status: form.get("status")
   });
   await refreshAll();
 }
@@ -1372,13 +1321,10 @@ async function saveProfile(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   try {
-    const payload = await api("/api/me/profile", {
-      method: "PATCH",
-      body: JSON.stringify({
-        fullName: form.get("fullName"),
-        phone: form.get("phone"),
-        telegramId: form.get("telegramId")
-      })
+    const payload = await client.auth.updateProfile({
+      fullName: form.get("fullName"),
+      phone: form.get("phone"),
+      telegramId: form.get("telegramId")
     });
     state.user = payload.user;
     localStorage.setItem("problemos.user", JSON.stringify(state.user));

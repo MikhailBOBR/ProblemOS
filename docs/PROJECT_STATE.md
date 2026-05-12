@@ -25,6 +25,8 @@ Focus: keep the JSON MVP working while introducing the backend boundaries needed
 - Repository boundary over JSON data for the future PostgreSQL adapter.
 - Repository provider selector with an explicit PostgreSQL adapter stub.
 - DTO validation helpers for request payloads.
+- Response presenter helpers for stable API envelopes.
+- Browser API client module used by main web actions.
 
 ## Current Slice
 
@@ -41,11 +43,11 @@ Focus: keep the JSON MVP working while introducing the backend boundaries needed
 
 Stage 2.9 should continue backend scaling:
 
-1. Add repository methods for remaining direct `data.*` access.
-2. Add PostgreSQL repository stubs and provider selector.
-3. Split API tests by route group.
-4. Add response DTO/presenter helpers for large payloads.
-5. Start typed frontend API client functions.
+1. Move service-level `data.*` reads into repositories where it improves the boundary.
+2. Add async repository contracts shared by JSON and future PostgreSQL adapters.
+3. Split the large browser app into feature modules.
+4. Expand the browser API client until all endpoint strings live there.
+5. Add frontend smoke tests around API client methods.
 
 ## Development Principle
 

@@ -3,6 +3,7 @@ import { runDeadlineScheduler } from "../services/schedulerService.js";
 import { requireUser } from "../http/requestContext.js";
 import { matchPath } from "../http/routing.js";
 import { createRepositories } from "../repositories/index.js";
+import { presentItem, presentList, presentUpdatedCount } from "../presenters/responsePresenters.js";
 import { createHttpError, sendJson } from "../utils/http.js";
 
 export async function handleNotificationRoutes(req, res, store, { pathname, method }) {
@@ -14,7 +15,7 @@ export async function handleNotificationRoutes(req, res, store, { pathname, meth
       const items = repos.notifications
         .listForUser(user.id)
         .sort((a, b) => new Date(b.sendAt).getTime() - new Date(a.sendAt).getTime());
-      return { items, unread: items.filter((item) => !item.isRead).length };
+      return presentList(items, { unread: items.filter((item) => !item.isRead).length });
     });
     sendJson(res, 200, result);
     return true;
@@ -23,10 +24,11 @@ export async function handleNotificationRoutes(req, res, store, { pathname, meth
   if (method === "PATCH" && pathname === "/api/notifications/read-all") {
     const { user } = await requireUser(req, store);
     const result = await store.mutate((data) => {
+      const repos = createRepositories(data);
       const now = new Date().toISOString();
       let updated = 0;
-      for (const notification of data.notifications) {
-        if (notification.userId === user.id && !notification.isRead) {
+      for (const notification of repos.notifications.listForUser(user.id)) {
+        if (!notification.isRead) {
           notification.isRead = true;
           notification.readAt = now;
           updated += 1;
@@ -39,7 +41,7 @@ export async function handleNotificationRoutes(req, res, store, { pathname, meth
         title: "Все уведомления отмечены прочитанными",
         details: { updated }
       });
-      return { updated };
+      return presentUpdatedCount(updated);
     });
     sendJson(res, 200, result);
     return true;
@@ -57,7 +59,7 @@ export async function handleNotificationRoutes(req, res, store, { pathname, meth
       }
       notification.isRead = true;
       notification.readAt = new Date().toISOString();
-      return { item: notification };
+      return presentItem(notification);
     });
 
     sendJson(res, 200, result);

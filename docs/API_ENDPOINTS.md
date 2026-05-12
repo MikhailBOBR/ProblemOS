@@ -4,6 +4,8 @@ Current API surface for the self-contained MVP. The live machine-readable draft 
 
 Request payloads are normalized through DTO helpers in `server/src/dto/requestDtos.js`. JSON API routes that accept bodies expect an object payload.
 
+Browser code should call these endpoints through `web/apiClient.js` when possible.
+
 ## Auth
 
 - `POST /api/auth/register` - register a user and return a bearer token.
