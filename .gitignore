@@ -6,3 +6,4 @@ server/data/backups/
 *.tmp
 .env
 .DS_Store
+DEVELOPMENT_PLAN_PRIVATE.md
