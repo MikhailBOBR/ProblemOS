@@ -313,11 +313,37 @@ test("core user flow: register, create case, evidence, document, package", async
   assert.equal(expertRecommendations.response.status, 200);
   assert.ok(expertRecommendations.body.items.some((item) => item.visibility === "internal"));
 
+  const userAnalytics = await api(baseUrl, "/api/me/analytics", {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(userAnalytics.response.status, 200);
+  assert.equal(userAnalytics.body.scope, "user");
+  assert.equal(userAnalytics.body.totals.cases, 1);
+  assert.ok(userAnalytics.body.totals.documents >= 1);
+  assert.ok(userAnalytics.body.byCategory.some((item) => item.id === "product_return" && item.count === 1));
+
+  const expertAnalytics = await api(baseUrl, "/api/expert/analytics", {
+    headers: { Authorization: `Bearer ${expert.body.token}` }
+  });
+  assert.equal(expertAnalytics.response.status, 200);
+  assert.equal(expertAnalytics.body.scope, "expert");
+  assert.ok(expertAnalytics.body.totals.cases >= 1);
+  assert.ok(expertAnalytics.body.experts.workload.some((item) => item.email === "expert@problemos.local" && item.assignedCases >= 1));
+
   const adminCases = await api(baseUrl, "/api/admin/cases?status=escalation", {
     headers: { Authorization: `Bearer ${admin.body.token}` }
   });
   assert.equal(adminCases.response.status, 200);
   assert.equal(adminCases.body.total, 1);
+
+  const adminAnalytics = await api(baseUrl, "/api/admin/analytics", {
+    headers: { Authorization: `Bearer ${admin.body.token}` }
+  });
+  assert.equal(adminAnalytics.response.status, 200);
+  assert.equal(adminAnalytics.body.scope, "admin");
+  assert.ok(adminAnalytics.body.totals.cases >= 1);
+  assert.ok(adminAnalytics.body.byStatus.some((item) => item.id === "escalation" && item.count >= 1));
+  assert.ok(adminAnalytics.body.experts.workload.some((item) => item.email === "expert@problemos.local"));
 
   const diagnostics = await api(baseUrl, "/api/diagnostics", {
     headers: { Authorization: `Bearer ${admin.body.token}` }

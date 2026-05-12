@@ -7,6 +7,7 @@ Current API surface for the self-contained MVP. The live machine-readable draft 
 - `POST /api/auth/register` - register a user and return a bearer token.
 - `POST /api/auth/login` - log in and return a bearer token.
 - `GET /api/me` - return current sanitized profile.
+- `GET /api/me/analytics` - personal case, deadline, document and notification analytics.
 - `PATCH /api/me/profile` - update name, phone and Telegram ID.
 
 ## Public Dictionaries
@@ -44,6 +45,7 @@ Current API surface for the self-contained MVP. The live machine-readable draft 
 - `GET /api/cases/{id}/recommendations` - list recommendations visible to the viewer.
 - `POST /api/cases/{id}/recommendations` - admin or assigned expert creates a user-visible or internal recommendation.
 - `GET /api/expert/cases` - expert/admin work queue.
+- `GET /api/expert/analytics` - expert queue analytics and workload.
 
 ## Notifications
 
@@ -54,6 +56,7 @@ Current API surface for the self-contained MVP. The live machine-readable draft 
 ## Admin
 
 - `GET /api/admin/stats` - platform counters and case status distribution.
+- `GET /api/admin/analytics` - platform analytics for categories, statuses, deadlines, documents and expert workload.
 - `GET /api/diagnostics` - runtime, storage and data health.
 - `POST /api/admin/scheduler/run` - run deadline scheduler.
 - `POST /api/admin/notifications/dispatch` - dry-run or send Telegram notifications.

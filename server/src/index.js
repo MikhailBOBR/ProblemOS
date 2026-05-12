@@ -20,6 +20,7 @@ import { runDeadlineScheduler } from "./services/schedulerService.js";
 import { dispatchTelegramNotifications } from "./services/telegramDeliveryService.js";
 import { handleTelegramUpdate } from "./services/telegramService.js";
 import { performCaseAction } from "./services/workflowService.js";
+import { buildAdminAnalytics, buildExpertWorkAnalytics, buildUserAnalytics } from "./services/analyticsService.js";
 import { buildApiDocs } from "./services/apiDocsService.js";
 import { assignExpertToCase, createExpertRecommendation, getCaseRecommendations } from "./services/expertService.js";
 import { buildPostgresMigrationSql } from "./services/postgresMigrationService.js";
@@ -243,6 +244,12 @@ async function routeApi(req, res, store, options = {}) {
     return true;
   }
 
+  if (method === "GET" && pathname === "/api/me/analytics") {
+    const { data, user } = await requireUser(req, store);
+    sendJson(res, 200, buildUserAnalytics(data, user));
+    return true;
+  }
+
   if (method === "PATCH" && pathname === "/api/me/profile") {
     const { user } = await requireUser(req, store);
     const body = await readJson(req);
@@ -340,6 +347,13 @@ async function routeApi(req, res, store, options = {}) {
       .map((item) => enrichCase(item, data, user))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     sendJson(res, 200, { items, total: items.length });
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/expert/analytics") {
+    const { data, user } = await requireUser(req, store);
+    assertRole(user, [ROLES.ADMIN, ROLES.EXPERT], "Expert role required");
+    sendJson(res, 200, buildExpertWorkAnalytics(data, user));
     return true;
   }
 
@@ -759,6 +773,13 @@ async function routeApi(req, res, store, options = {}) {
       auditLogs: data.auditLogs.length,
       byStatus
     });
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/admin/analytics") {
+    const { data, user } = await requireUser(req, store);
+    requireAdmin(user);
+    sendJson(res, 200, buildAdminAnalytics(data));
     return true;
   }
 

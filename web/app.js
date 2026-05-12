@@ -18,7 +18,10 @@ const state = {
   templates: [],
   adminUsers: [],
   adminCases: [],
-  adminCategories: []
+  adminCategories: [],
+  userAnalytics: null,
+  adminAnalytics: null,
+  expertAnalytics: null
 };
 
 const statusTone = {
@@ -101,10 +104,19 @@ async function loadNotifications() {
   state.notifications = payload.items;
 }
 
+async function loadAnalytics() {
+  if (!state.user) return;
+  state.userAnalytics = await api("/api/me/analytics");
+  if (["admin", "expert"].includes(state.user.role)) {
+    state.expertAnalytics = await api("/api/expert/analytics");
+  }
+}
+
 async function loadAdmin() {
   if (state.user?.role !== "admin") return;
-  const [stats, diagnostics, templates, users, cases, categories] = await Promise.all([
+  const [stats, analytics, diagnostics, templates, users, cases, categories] = await Promise.all([
     api("/api/admin/stats"),
+    api("/api/admin/analytics"),
     api("/api/diagnostics"),
     api("/api/admin/templates"),
     api("/api/admin/users"),
@@ -112,6 +124,7 @@ async function loadAdmin() {
     api("/api/admin/categories")
   ]);
   state.adminStats = stats;
+  state.adminAnalytics = analytics;
   state.adminDiagnostics = diagnostics;
   state.templates = templates.items;
   state.adminUsers = users.items;
@@ -126,7 +139,7 @@ async function bootstrap() {
       const me = await api("/api/me");
       state.user = me.user;
       localStorage.setItem("problemos.user", JSON.stringify(state.user));
-      await Promise.all([loadCases(), loadNotifications(), loadAdmin()]);
+      await Promise.all([loadCases(), loadNotifications(), loadAnalytics(), loadAdmin()]);
     }
   } catch (error) {
     clearSession();
@@ -276,7 +289,7 @@ async function onAuthSubmit(event) {
       })
     });
     setSession(payload);
-    await Promise.all([loadCases(), loadNotifications(), loadAdmin()]);
+    await Promise.all([loadCases(), loadNotifications(), loadAnalytics(), loadAdmin()]);
     render();
   } catch (err) {
     error.textContent = err.message;
@@ -294,6 +307,8 @@ function renderDashboard() {
       ${metric("Нужны действия", actionCases.length)}
       ${metric("Документы", docsCount)}
     </section>
+    ${renderAnalyticsOverview(state.userAnalytics, "РњРѕСЏ Р°РЅР°Р»РёС‚РёРєР°")}
+    ${state.user.role === "expert" ? renderAnalyticsOverview(state.expertAnalytics, "Expert analytics") : ""}
     <section class="split" style="margin-top:16px">
       <div class="panel">
         <h2 class="section-title">Что делать дальше</h2>
@@ -334,6 +349,102 @@ function metric(label, value) {
       <div class="metric-label">${label}</div>
       <div class="metric-value">${value}</div>
     </div>
+  `;
+}
+
+function renderProgressRows(items, labelKey = "label") {
+  return `
+    <div class="timeline">
+      ${
+        items.length
+          ? items.map((item) => `
+            <div class="line-item">
+              <div class="line-title">${escapeHtml(item[labelKey] || item.name || item.id)} - ${escapeHtml(String(item.count ?? item.assignedCases ?? 0))}</div>
+              <div class="progress"><span style="width:${Math.max(0, Math.min(100, item.percent ?? 0))}%"></span></div>
+            </div>
+          `).join("")
+          : `<div class="hint">Р”Р°РЅРЅС‹С… РїРѕРєР° РЅРµС‚.</div>`
+      }
+    </div>
+  `;
+}
+
+function renderAnalyticsOverview(analytics, title = "Analytics") {
+  if (!analytics) return "";
+  const activeStatuses = (analytics.byStatus || []).filter((item) => item.count > 0);
+  const categories = (analytics.byCategory || []).filter((item) => item.count > 0);
+
+  return `
+    <section class="split" style="margin-top:16px">
+      <div class="panel">
+        <div class="case-head">
+          <h2 class="section-title">${escapeHtml(title)}</h2>
+          <span class="status ${analytics.totals?.overdueCases ? "danger" : "success"}">${escapeHtml(String(analytics.totals?.overdueCases || 0))} overdue</span>
+        </div>
+        <div class="grid cols-3" style="margin-top:12px">
+          <div class="line-item"><div class="line-title">Active</div><div class="line-subtitle">${escapeHtml(String(analytics.totals?.activeCases || 0))}</div></div>
+          <div class="line-item"><div class="line-title">Documents</div><div class="line-subtitle">${escapeHtml(String(analytics.totals?.documents || 0))}</div></div>
+          <div class="line-item"><div class="line-title">Evidence</div><div class="line-subtitle">${escapeHtml(String(analytics.totals?.evidence || 0))}</div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2 class="section-title">Status funnel</h2>
+        ${renderProgressRows(activeStatuses)}
+      </div>
+    </section>
+    <section class="split" style="margin-top:16px">
+      <div class="panel">
+        <h2 class="section-title">Categories</h2>
+        ${renderProgressRows(categories, "name")}
+      </div>
+      <div class="panel">
+        <h2 class="section-title">Deadlines</h2>
+        <div class="timeline">
+          <div class="line-item active">
+            <div class="line-title">Next 7 days</div>
+            <div class="line-subtitle">${escapeHtml(String(analytics.deadlines?.next7Days || 0))} cases</div>
+          </div>
+          <div class="line-item ${analytics.deadlines?.overdue ? "active" : ""}">
+            <div class="line-title">Overdue</div>
+            <div class="line-subtitle">${escapeHtml(String(analytics.deadlines?.overdue || 0))} cases</div>
+          </div>
+          ${
+            analytics.deadlines?.upcoming?.length
+              ? analytics.deadlines.upcoming.map((item) => `
+                <div class="line-item">
+                  <div class="line-title">${formatDate(item.deadlineAt)} - ${escapeHtml(item.title)}</div>
+                  <div class="line-subtitle">${escapeHtml(item.category)} / ${escapeHtml(item.status)}</div>
+                </div>
+              `).join("")
+              : `<div class="hint">Р‘Р»РёР¶Р°Р№С€РёС… РґРµРґР»Р°Р№РЅРѕРІ РЅРµС‚.</div>`
+          }
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderExpertAnalytics(analytics) {
+  if (!analytics?.experts) return "";
+  return `
+    <section class="panel" style="margin-top:16px">
+      <div class="case-head">
+        <h2 class="section-title">Expert workload</h2>
+        <span class="status info">${escapeHtml(String(analytics.experts.totalExperts || 0))} experts</span>
+      </div>
+      <div class="timeline" style="margin-top:12px">
+        ${
+          analytics.experts.workload?.length
+            ? analytics.experts.workload.map((item) => `
+              <div class="line-item">
+                <div class="line-title">${escapeHtml(item.fullName || item.email)} - ${escapeHtml(String(item.assignedCases))} cases</div>
+                <div class="line-subtitle">active: ${escapeHtml(String(item.activeCases))}, overdue: ${escapeHtml(String(item.overdueCases))}, recommendations: ${escapeHtml(String(item.recommendations))}</div>
+              </div>
+            `).join("")
+            : `<div class="hint">Р­РєСЃРїРµСЂС‚С‹ РїРѕРєР° РЅРµ РЅР°Р·РЅР°С‡РµРЅС‹.</div>`
+        }
+      </div>
+    </section>
   `;
 }
 
@@ -872,6 +983,8 @@ function renderAdmin() {
       ${metric("Audit log", stats.auditLogs || 0)}
     </section>
     ${renderAdminManagement()}
+    ${renderAnalyticsOverview(state.adminAnalytics, "Platform analytics")}
+    ${renderExpertAnalytics(state.adminAnalytics)}
     <section class="split" style="margin-top:16px">
       <div class="panel">
         <h2 class="section-title">Операции</h2>
@@ -1043,7 +1156,7 @@ function bindViewEvents() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadCases(), loadNotifications(), loadAdmin()]);
+  await Promise.all([loadCases(), loadNotifications(), loadAnalytics(), loadAdmin()]);
   render();
 }
 

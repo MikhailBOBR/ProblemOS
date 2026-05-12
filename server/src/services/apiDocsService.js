@@ -11,6 +11,7 @@ export function buildApiDocs() {
       "/api/auth/register": { post: { tags: ["auth"], summary: "Register user and create session" } },
       "/api/auth/login": { post: { tags: ["auth"], summary: "Create session token" } },
       "/api/me": { get: { tags: ["auth"], summary: "Current user profile" } },
+      "/api/me/analytics": { get: { tags: ["cases"], summary: "Personal case analytics" } },
       "/api/categories": { get: { tags: ["cases"], summary: "Public categories and statuses" } },
       "/api/cases": {
         get: { tags: ["cases"], summary: "List visible cases" },
@@ -27,10 +28,12 @@ export function buildApiDocs() {
         post: { tags: ["experts"], summary: "Create recommendation as assigned expert or admin" }
       },
       "/api/expert/cases": { get: { tags: ["experts"], summary: "List assigned expert cases" } },
+      "/api/expert/analytics": { get: { tags: ["experts"], summary: "Expert queue analytics" } },
       "/api/notifications": { get: { tags: ["cases"], summary: "List notifications and run deadline check for user" } },
       "/api/admin/users": { get: { tags: ["admin"], summary: "List users with case counts" } },
       "/api/admin/users/{id}/role": { patch: { tags: ["admin"], summary: "Change user role" } },
       "/api/admin/cases": { get: { tags: ["admin"], summary: "List all cases with owners" } },
+      "/api/admin/analytics": { get: { tags: ["admin"], summary: "Platform analytics dashboard data" } },
       "/api/admin/cases/{id}/assign-expert": { patch: { tags: ["admin"], summary: "Assign or unassign case expert" } },
       "/api/admin/categories": { get: { tags: ["admin"], summary: "List editable category playbooks" } },
       "/api/admin/categories/{id}": { patch: { tags: ["admin"], summary: "Update category playbook" } },
