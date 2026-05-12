@@ -352,6 +352,26 @@ function renderCaseCard(item) {
   `;
 }
 
+function renderWorkflowActions(item) {
+  if (item.status === "closed") {
+    return `
+      <div class="toolbar" style="margin-top:14px">
+        <button class="btn ghost" data-case-action="reopen_case" data-case-id="${item.id}">Вернуть в работу</button>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="toolbar" style="margin-top:14px">
+      <button class="btn ghost" data-case-action="complete_current_step" data-case-id="${item.id}">Шаг выполнен</button>
+      <button class="btn ghost" data-case-action="mark_sent" data-case-id="${item.id}">Обращение отправлено</button>
+      <button class="btn ghost" data-case-action="mark_deadline_missed" data-case-id="${item.id}">Срок нарушен</button>
+      <button class="btn warning" data-case-action="start_escalation" data-case-id="${item.id}">Эскалация</button>
+      <button class="btn ghost" data-case-action="close_case" data-case-id="${item.id}">Закрыть дело</button>
+    </div>
+  `;
+}
+
 function renderCaseDetails(item) {
   const status = getStatus(item.status);
   const category = item.category || state.categories.find((categoryItem) => categoryItem.id === item.categoryId);
@@ -373,6 +393,7 @@ function renderCaseDetails(item) {
             <span class="status ${status.tone || "muted"}">${escapeHtml(status.label)}</span>
           </div>
           <div class="notice" style="margin-top:14px">${escapeHtml(item.nextAction)}</div>
+          ${renderWorkflowActions(item)}
         </div>
         <div class="panel">
           <h2 class="section-title">Доказательства</h2>
@@ -407,6 +428,8 @@ function renderCaseDetails(item) {
                     <div class="line-title">${escapeHtml(evidence.title)}</div>
                     <div class="line-subtitle">${escapeHtml(evidence.fileName)}</div>
                     <div class="hint">${escapeHtml(evidence.description || "")}</div>
+                    <div class="hint">${evidence.hasFile ? `SHA-256: ${escapeHtml(String(evidence.fileHash || "").slice(0, 16))}...` : "Файл не сохранен, есть только запись"}</div>
+                    ${evidence.hasFile ? `<a class="btn ghost" href="${evidence.downloadUrl}" data-download-evidence="${evidence.id}" style="margin-top:10px">Скачать файл</a>` : ""}
                   </div>
                 `).join("")
                 : `<div class="hint">Пока ничего не загружено.</div>`
@@ -660,7 +683,17 @@ function bindViewEvents() {
     });
   });
 
-  document.querySelectorAll("[data-download-doc], [data-download-package]").forEach((link) => {
+  document.querySelectorAll("[data-case-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/cases/${button.dataset.caseId}/actions`, {
+        method: "POST",
+        body: JSON.stringify({ action: button.dataset.caseAction })
+      });
+      await refreshAll();
+    });
+  });
+
+  document.querySelectorAll("[data-download-doc], [data-download-package], [data-download-evidence]").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
       downloadWithToken(link.href);
@@ -754,7 +787,11 @@ async function uploadEvidence(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
   const file = form.get("file");
-  const fileData = file && file.size <= 700_000 ? await readFileAsDataUrl(file) : "";
+  if (file && file.size > 5_500_000) {
+    alert("Файл слишком большой для быстрой загрузки. Лимит текущего MVP: 5.5 МБ.");
+    return;
+  }
+  const fileData = file && file.size <= 5_500_000 ? await readFileAsDataUrl(file) : "";
 
   await api(`/api/cases/${event.currentTarget.dataset.caseId}/evidence`, {
     method: "POST",
@@ -792,9 +829,14 @@ async function downloadWithToken(url) {
       Authorization: `Bearer ${state.token}`
     }
   });
+  if (!response.ok) {
+    const message = await response.text();
+    alert(message);
+    return;
+  }
   const blob = await response.blob();
   const disposition = response.headers.get("content-disposition") || "";
-  const fallback = url.includes("/package") ? "case-package.md" : "document.rtf";
+  const fallback = url.includes("/package") ? "case-package.md" : url.includes("/evidence/") ? "evidence-file" : "document.rtf";
   const match = disposition.match(/filename="(.+)"/);
   const fileName = match ? decodeURIComponent(match[1]) : fallback;
   const objectUrl = URL.createObjectURL(blob);

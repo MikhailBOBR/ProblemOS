@@ -117,16 +117,20 @@ export function updateCaseWithInput(problemCase, input) {
   return next;
 }
 
-export function addEvidenceToCase(problemCase, input) {
+export function addEvidenceToCase(problemCase, input, fileMeta = {}) {
   const now = nowIso();
+  const evidenceId = input.id || createId("evidence");
   const evidence = {
-    id: createId("evidence"),
+    id: evidenceId,
     caseId: problemCase.id,
     evidenceType: input.evidenceType || "",
-    fileName: input.fileName || input.title || "Материал",
-    fileType: input.fileType || "application/octet-stream",
-    fileSize: Number(input.fileSize ?? 0),
-    fileData: input.fileData || "",
+    fileName: fileMeta.originalName || input.fileName || input.title || "Материал",
+    fileType: fileMeta.fileType || input.fileType || "application/octet-stream",
+    fileSize: Number(fileMeta.fileSize ?? input.fileSize ?? 0),
+    hasFile: Boolean(fileMeta.hasFile),
+    storageKey: fileMeta.storageKey || "",
+    fileHash: fileMeta.fileHash || "",
+    downloadUrl: fileMeta.hasFile ? `/api/evidence/${evidenceId}/download` : "",
     title: input.title || input.fileName || "Доказательство",
     description: input.description || "",
     uploadedAt: now
@@ -134,6 +138,7 @@ export function addEvidenceToCase(problemCase, input) {
 
   const next = {
     ...problemCase,
+    status: problemCase.status === CASE_STATUS.FACT_COLLECTION ? CASE_STATUS.EVIDENCE_COLLECTION : problemCase.status,
     evidence: [...(problemCase.evidence ?? []), evidence],
     updatedAt: now,
     timeline: [

@@ -10,11 +10,12 @@
 ## Phase 1. Strong MVP
 
 - [ ] PostgreSQL-ready data model.
-- [ ] Безопасное файловое хранилище доказательств.
+- [x] Безопасное файловое хранилище доказательств.
 - [ ] Настоящие DOCX/PDF экспорты.
-- [ ] Telegram-бот с диалогами `/start`, `/newcase`, `/mycases`, `/next`.
+- [x] Telegram webhook skeleton с командами `/start`, `/newcase`, `/mycases`, `/next`.
 - [ ] Email/Telegram уведомления о дедлайнах.
 - [ ] Audit log для всех действий по делу.
+- [x] Workflow API для действий по делу.
 
 ## Phase 2. Product Depth
 

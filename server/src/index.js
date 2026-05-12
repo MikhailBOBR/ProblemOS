@@ -7,8 +7,10 @@ import { CASE_STATUS_META } from "./domain/statuses.js";
 import { analyzeProblem } from "./services/aiService.js";
 import { addEvidenceToCase, createCaseFromInput, enrichCase, updateCaseWithInput } from "./services/caseService.js";
 import { attachGeneratedDocument, buildCasePackage, generateDocument, toRtf } from "./services/documentService.js";
+import { openEvidenceFile, persistEvidenceFile, sanitizeFileName } from "./services/fileStorageService.js";
 import { buildDeadlineNotifications, createNotification } from "./services/notificationService.js";
-import { createBotDraftFromMessage } from "./telegram/botAdapter.js";
+import { performCaseAction } from "./services/workflowService.js";
+import { createBotDraftFromMessage, extractTelegramMessage, formatTelegramCases, formatTelegramNextAction } from "./telegram/botAdapter.js";
 import { createId } from "./utils/id.js";
 import { createSessionToken, hashPassword, sanitizeUser, verifyPassword } from "./utils/security.js";
 import { createHttpError, getBearerToken, parseRequestUrl, readJson, sendError, sendJson, sendText, serveStatic } from "./utils/http.js";
@@ -16,6 +18,7 @@ import { createHttpError, getBearerToken, parseRequestUrl, readJson, sendError, 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_STATIC_ROOT = join(__dirname, "..", "..", "web");
+const DEFAULT_UPLOAD_ROOT = join(process.cwd(), "server", "data", "uploads");
 
 function findUserByToken(data, token) {
   if (!token || !data.sessions[token]) {
@@ -50,6 +53,23 @@ function getCaseForUser(data, user, caseId) {
   return problemCase;
 }
 
+function findEvidenceForUser(data, user, evidenceId) {
+  for (const problemCase of data.cases) {
+    const evidence = (problemCase.evidence ?? []).find((item) => item.id === evidenceId);
+    if (!evidence) {
+      continue;
+    }
+
+    if (user.role !== "admin" && problemCase.userId !== user.id) {
+      throw createHttpError(403, "Нет доступа к этому доказательству");
+    }
+
+    return { problemCase, evidence };
+  }
+
+  throw createHttpError(404, "Доказательство не найдено");
+}
+
 function replaceCase(data, nextCase) {
   const index = data.cases.findIndex((item) => item.id === nextCase.id);
   if (index === -1) {
@@ -79,10 +99,11 @@ function getTemplatesForCategory(data, categoryId) {
   return data.documentTemplates.filter((template) => template.categoryId === categoryId && template.isActive);
 }
 
-async function routeApi(req, res, store) {
+async function routeApi(req, res, store, options = {}) {
   const url = parseRequestUrl(req);
   const { pathname } = url;
   const method = req.method ?? "GET";
+  const uploadRoot = options.uploadRoot ?? DEFAULT_UPLOAD_ROOT;
 
   if (method === "GET" && pathname === "/api/health") {
     sendJson(res, 200, { ok: true, service: "ProblemOS", time: new Date().toISOString() });
@@ -167,6 +188,114 @@ async function routeApi(req, res, store) {
     return true;
   }
 
+  if (method === "POST" && pathname === "/api/telegram/link") {
+    const { user } = await requireUser(req, store);
+    const body = await readJson(req);
+    const telegramId = String(body.telegramId ?? "").trim();
+
+    if (!telegramId) {
+      throw createHttpError(400, "Укажите Telegram ID");
+    }
+
+    const result = await store.mutate((data) => {
+      const freshUser = data.users.find((item) => item.id === user.id);
+      freshUser.telegramId = telegramId;
+      return { user: sanitizeUser(freshUser) };
+    });
+
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/telegram/webhook") {
+    const update = await readJson(req);
+    const message = extractTelegramMessage(update);
+
+    if (!message.telegramId) {
+      throw createHttpError(400, "В webhook нет Telegram ID");
+    }
+
+    const result = await store.mutate((data) => {
+      const telegramUser = data.users.find((item) => String(item.telegramId) === String(message.telegramId));
+
+      if (!telegramUser) {
+        return {
+          ok: true,
+          chatId: message.chatId,
+          text: "Аккаунт не привязан. Откройте сайт ProblemOS и привяжите Telegram ID в профиле."
+        };
+      }
+
+      const userCases = data.cases.filter((item) => item.userId === telegramUser.id);
+      const text = message.text.trim();
+
+      if (text === "/start" || text === "/help") {
+        return {
+          ok: true,
+          chatId: message.chatId,
+          text: "ProblemOS готов. Команды: /newcase описание, /mycases, /next."
+        };
+      }
+
+      if (text === "/mycases") {
+        return {
+          ok: true,
+          chatId: message.chatId,
+          text: formatTelegramCases(userCases)
+        };
+      }
+
+      if (text === "/next") {
+        return {
+          ok: true,
+          chatId: message.chatId,
+          text: formatTelegramNextAction(userCases)
+        };
+      }
+
+      if (text.startsWith("/newcase")) {
+        const description = text.replace("/newcase", "").trim();
+        if (!description) {
+          return {
+            ok: true,
+            chatId: message.chatId,
+            text: "Напишите так: /newcase Купил товар, он сломался, магазин не возвращает деньги"
+          };
+        }
+
+        const { problemCase, analysis } = createCaseFromInput(telegramUser.id, { description });
+        data.cases.push(problemCase);
+        data.notifications.push(
+          createNotification({
+            userId: telegramUser.id,
+            caseId: problemCase.id,
+            type: "telegram_case_created",
+            title: "Дело создано через Telegram",
+            message: problemCase.nextAction
+          })
+        );
+
+        return {
+          ok: true,
+          chatId: message.chatId,
+          caseId: problemCase.id,
+          text: `Дело создано: ${problemCase.title}\nКатегория: ${analysis.categoryName}\nСледующий шаг: ${problemCase.nextAction}`
+        };
+      }
+
+      const draft = createBotDraftFromMessage(text);
+      return {
+        ok: true,
+        chatId: message.chatId,
+        text: draft.reply,
+        suggestedActions: draft.suggestedActions
+      };
+    });
+
+    sendJson(res, 200, result);
+    return true;
+  }
+
   if (method === "GET" && pathname === "/api/cases") {
     const { data, user } = await requireUser(req, store);
     const items = data.cases
@@ -223,19 +352,67 @@ async function routeApi(req, res, store) {
     return true;
   }
 
+  const actionParams = matchPath(pathname, "/api/cases/:id/actions");
+  if (actionParams && method === "POST") {
+    const { user } = await requireUser(req, store);
+    const body = await readJson(req);
+
+    const result = await store.mutate((data) => {
+      const problemCase = getCaseForUser(data, user, actionParams.id);
+      const nextCase = performCaseAction(problemCase, String(body.action ?? ""), body);
+      replaceCase(data, nextCase);
+      data.notifications.push(
+        createNotification({
+          userId: nextCase.userId,
+          caseId: nextCase.id,
+          type: "workflow",
+          title: "Дело обновлено",
+          message: nextCase.nextAction
+        })
+      );
+      return { item: enrichCase(nextCase, data) };
+    });
+
+    sendJson(res, 200, result);
+    return true;
+  }
+
   const evidenceParams = matchPath(pathname, "/api/cases/:id/evidence");
   if (evidenceParams && method === "POST") {
     const { user } = await requireUser(req, store);
     const body = await readJson(req);
 
-    const result = await store.mutate((data) => {
+    const result = await store.mutate(async (data) => {
       const problemCase = getCaseForUser(data, user, evidenceParams.id);
-      const { next, evidence } = addEvidenceToCase(problemCase, body);
+      const evidenceId = createId("evidence");
+      const fileMeta = await persistEvidenceFile({
+        uploadRoot,
+        caseId: problemCase.id,
+        evidenceId,
+        fileName: body.fileName || body.title,
+        fileType: body.fileType,
+        fileData: body.fileData
+      });
+      const { next, evidence } = addEvidenceToCase(problemCase, { ...body, id: evidenceId }, fileMeta);
       replaceCase(data, next);
       return { item: evidence, case: enrichCase(next, data) };
     });
 
     sendJson(res, 201, result);
+    return true;
+  }
+
+  const evidenceDownloadParams = matchPath(pathname, "/api/evidence/:id/download");
+  if (evidenceDownloadParams && method === "GET") {
+    const { data, user } = await requireUser(req, store);
+    const { evidence } = findEvidenceForUser(data, user, evidenceDownloadParams.id);
+    const file = await openEvidenceFile(uploadRoot, evidence);
+    res.writeHead(200, {
+      "Content-Type": file.fileType,
+      "Content-Length": file.size,
+      "Content-Disposition": `attachment; filename="${encodeURIComponent(sanitizeFileName(file.fileName))}"`
+    });
+    file.stream.pipe(res);
     return true;
   }
 
@@ -387,12 +564,13 @@ async function routeApi(req, res, store) {
 export function createProblemOsServer(options = {}) {
   const store = new JsonStore(options.dataFile);
   const staticRoot = options.staticRoot ?? DEFAULT_STATIC_ROOT;
+  const uploadRoot = options.uploadRoot ?? DEFAULT_UPLOAD_ROOT;
 
   return createServer(async (req, res) => {
     try {
       const url = parseRequestUrl(req);
       if (url.pathname.startsWith("/api/")) {
-        await routeApi(req, res, store);
+        await routeApi(req, res, store, { uploadRoot });
         return;
       }
 
@@ -408,7 +586,8 @@ export async function startServer() {
   const host = process.env.SERVER_HOST ?? "127.0.0.1";
   const server = createProblemOsServer({
     dataFile: process.env.DATA_FILE,
-    staticRoot: process.env.STATIC_ROOT
+    staticRoot: process.env.STATIC_ROOT,
+    uploadRoot: process.env.UPLOAD_ROOT
   });
 
   server.listen(port, host, () => {

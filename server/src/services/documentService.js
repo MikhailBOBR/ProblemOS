@@ -105,7 +105,10 @@ export function buildCasePackage(problemCase, data) {
     "",
     "## Доказательства",
     ...(problemCase.evidence?.length
-      ? problemCase.evidence.map((item) => `- ${item.title} (${item.fileName}) - ${item.description || "без описания"}`)
+      ? problemCase.evidence.map((item) => {
+          const fileState = item.hasFile ? `файл сохранен, sha256 ${String(item.fileHash || "").slice(0, 16)}...` : "только запись без файла";
+          return `- ${item.title} (${item.fileName}) - ${item.description || "без описания"}; ${fileState}`;
+        })
       : ["- Доказательства пока не загружены."]),
     "",
     "## Документы",

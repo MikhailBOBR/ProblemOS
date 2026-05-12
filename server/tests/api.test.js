@@ -8,7 +8,11 @@ import { createProblemOsServer } from "../src/index.js";
 
 async function startTestServer() {
   const dir = await mkdtemp(join(tmpdir(), "problemos-"));
-  const server = createProblemOsServer({ dataFile: join(dir, "data.json"), staticRoot: join(process.cwd(), "web") });
+  const server = createProblemOsServer({
+    dataFile: join(dir, "data.json"),
+    uploadRoot: join(dir, "uploads"),
+    staticRoot: join(process.cwd(), "web")
+  });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
@@ -82,12 +86,21 @@ test("core user flow: register, create case, evidence, document, package", async
       title: "Чек",
       fileName: "receipt.png",
       fileType: "image/png",
-      fileSize: 1200
+      fileSize: 5,
+      fileData: "data:image/png;base64,aGVsbG8="
     })
   });
 
   assert.equal(evidence.response.status, 201);
   assert.equal(evidence.body.item.title, "Чек");
+  assert.equal(evidence.body.item.hasFile, true);
+  assert.ok(evidence.body.item.fileHash);
+
+  const evidenceDownload = await fetch(`${baseUrl}/api/evidence/${evidence.body.item.id}/download`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  assert.equal(evidenceDownload.status, 200);
+  assert.equal(await evidenceDownload.text(), "hello");
 
   const generated = await api(baseUrl, `/api/cases/${caseId}/documents/generate`, {
     method: "POST",
@@ -97,6 +110,24 @@ test("core user flow: register, create case, evidence, document, package", async
 
   assert.equal(generated.response.status, 201);
   assert.ok(generated.body.item.content.includes("ПРЕТЕНЗИЯ"));
+
+  const sent = await api(baseUrl, `/api/cases/${caseId}/actions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action: "mark_sent" })
+  });
+
+  assert.equal(sent.response.status, 200);
+  assert.equal(sent.body.item.status, "waiting_response");
+
+  const escalation = await api(baseUrl, `/api/cases/${caseId}/actions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action: "start_escalation" })
+  });
+
+  assert.equal(escalation.response.status, 200);
+  assert.equal(escalation.body.item.status, "escalation");
 
   const list = await api(baseUrl, "/api/cases", {
     headers: { Authorization: `Bearer ${token}` }
@@ -136,4 +167,50 @@ test("users cannot read other users cases", async (t) => {
   });
 
   assert.equal(forbidden.response.status, 403);
+});
+
+test("telegram link and webhook can create a case", async (t) => {
+  const { server, baseUrl } = await startTestServer();
+  t.after(() => server.close());
+
+  const registered = await api(baseUrl, "/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email: "telegram@example.test", password: "secret123", fullName: "Telegram User" })
+  });
+
+  const linked = await api(baseUrl, "/api/telegram/link", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${registered.body.token}` },
+    body: JSON.stringify({ telegramId: "1001" })
+  });
+  assert.equal(linked.response.status, 200);
+
+  const createdByBot = await api(baseUrl, "/api/telegram/webhook", {
+    method: "POST",
+    body: JSON.stringify({
+      message: {
+        text: "/newcase УК не чинит лифт",
+        from: { id: 1001 },
+        chat: { id: 1001 }
+      }
+    })
+  });
+
+  assert.equal(createdByBot.response.status, 200);
+  assert.equal(createdByBot.body.ok, true);
+  assert.ok(createdByBot.body.caseId);
+
+  const next = await api(baseUrl, "/api/telegram/webhook", {
+    method: "POST",
+    body: JSON.stringify({
+      message: {
+        text: "/next",
+        from: { id: 1001 },
+        chat: { id: 1001 }
+      }
+    })
+  });
+
+  assert.equal(next.response.status, 200);
+  assert.ok(next.body.text.includes("Дело:"));
 });
