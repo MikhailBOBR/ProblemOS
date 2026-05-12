@@ -8,6 +8,8 @@ Implemented:
   - Users, sessions, cases, categories, document templates, generated documents, notifications, comments and recommendations now have a shared data access boundary.
   - The current implementation wraps the existing JSON data object.
   - The method names are intended to be mirrored by future PostgreSQL repositories.
+- Added `server/src/repositories/index.js` as a provider selector.
+- Added `server/src/repositories/postgresRepositories.js` as an explicit PostgreSQL adapter stub.
 - Added `server/src/repositories/README.md` with the migration direction.
 - Updated `server/src/http/requestContext.js` and `server/src/http/routing.js` to use repositories for common lookups and replacements.
 - Updated key route modules to use repositories for high-frequency reads and writes.

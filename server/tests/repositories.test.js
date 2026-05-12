@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createSeedData } from "../src/data/seed.js";
 import { createCaseFromInput } from "../src/services/caseService.js";
 import { createNotification } from "../src/services/notificationService.js";
-import { createJsonRepositories } from "../src/repositories/jsonRepositories.js";
+import { createJsonRepositories, createRepositories } from "../src/repositories/index.js";
 
 test("json repositories expose stable data access contracts", () => {
   const data = createSeedData();
@@ -39,4 +39,11 @@ test("json repositories expose stable data access contracts", () => {
   });
   repos.notifications.create(notification);
   assert.equal(repos.notifications.findForUser(notification.id, admin.id).id, notification.id);
+});
+
+test("repository provider selects json backend and rejects unknown backends", () => {
+  const data = createSeedData();
+
+  assert.equal(createRepositories(data, { backend: "json" }).users.findByEmail("demo@problemos.local").role, "user");
+  assert.throws(() => createRepositories(data, { backend: "unknown" }), /Unknown repository backend/);
 });

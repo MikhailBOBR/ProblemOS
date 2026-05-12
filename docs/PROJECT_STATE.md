@@ -23,11 +23,14 @@ Focus: keep the JSON MVP working while introducing the backend boundaries needed
 - Route modules for system, auth, analytics, cases, evidence, documents, notifications, Telegram and admin.
 - Admin route submodules for ops, users, cases, categories and templates.
 - Repository boundary over JSON data for the future PostgreSQL adapter.
+- Repository provider selector with an explicit PostgreSQL adapter stub.
 - DTO validation helpers for request payloads.
 
 ## Current Slice
 
 - Added `server/src/repositories/jsonRepositories.js`.
+- Added `server/src/repositories/index.js`.
+- Added `server/src/repositories/postgresRepositories.js`.
 - Added `server/src/http/validation.js`.
 - Added `server/src/dto/requestDtos.js`.
 - Updated request context, routing helpers and key routes to use repositories and DTOs.
