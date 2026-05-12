@@ -20,74 +20,24 @@ import { runDeadlineScheduler } from "./services/schedulerService.js";
 import { dispatchTelegramNotifications } from "./services/telegramDeliveryService.js";
 import { handleTelegramUpdate } from "./services/telegramService.js";
 import { performCaseAction } from "./services/workflowService.js";
-import { buildAdminAnalytics, buildExpertWorkAnalytics, buildUserAnalytics } from "./services/analyticsService.js";
 import { buildApiDocs } from "./services/apiDocsService.js";
 import { assignExpertToCase, createExpertRecommendation, getCaseRecommendations } from "./services/expertService.js";
 import { buildPostgresMigrationSql } from "./services/postgresMigrationService.js";
 import { updateCategoryPlaybook } from "./services/playbookService.js";
 import { assertCaseEdit, assertCaseReview, assertRole, canAccessCase, ROLES, sanitizeRole } from "./services/rbacService.js";
 import { getTemplateVersions, restoreTemplateVersion, updateTemplateFromInput } from "./services/templateVersionService.js";
+import { findEvidenceForUser, getCaseForUser, requireAdmin, requireUser } from "./http/requestContext.js";
+import { handleAnalyticsRoutes } from "./routes/analyticsRoutes.js";
 import { createBotDraftFromMessage } from "./telegram/botAdapter.js";
 import { createId } from "./utils/id.js";
 import { createSessionToken, hashPassword, sanitizeUser, verifyPassword } from "./utils/security.js";
-import { createHttpError, getBearerToken, parseRequestUrl, readJson, sendError, sendJson, sendText, serveStatic } from "./utils/http.js";
+import { createHttpError, parseRequestUrl, readJson, sendError, sendJson, sendText, serveStatic } from "./utils/http.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DEFAULT_STATIC_ROOT = join(__dirname, "..", "..", "web");
 const DEFAULT_UPLOAD_ROOT = join(process.cwd(), "server", "data", "uploads");
 const DEFAULT_BACKUP_ROOT = join(process.cwd(), "server", "data", "backups");
-
-function findUserByToken(data, token) {
-  if (!token || !data.sessions[token]) {
-    return null;
-  }
-  return data.users.find((user) => user.id === data.sessions[token].userId) ?? null;
-}
-
-async function requireUser(req, store) {
-  const data = await store.read();
-  const user = findUserByToken(data, getBearerToken(req));
-  if (!user) {
-    throw createHttpError(401, "Нужно войти в аккаунт");
-  }
-  return { data, user };
-}
-
-function requireAdmin(user) {
-  assertRole(user, ROLES.ADMIN, "Admin role required");
-  if (user.role !== "admin") {
-    throw createHttpError(403, "Нужны права администратора");
-  }
-}
-
-function getCaseForUser(data, user, caseId) {
-  const problemCase = data.cases.find((item) => item.id === caseId);
-  if (!problemCase) {
-    throw createHttpError(404, "Дело не найдено");
-  }
-  if (!canAccessCase(user, problemCase)) {
-    throw createHttpError(403, "Нет доступа к этому делу");
-  }
-  return problemCase;
-}
-
-function findEvidenceForUser(data, user, evidenceId) {
-  for (const problemCase of data.cases) {
-    const evidence = (problemCase.evidence ?? []).find((item) => item.id === evidenceId);
-    if (!evidence) {
-      continue;
-    }
-
-    if (!canAccessCase(user, problemCase)) {
-      throw createHttpError(403, "Нет доступа к этому доказательству");
-    }
-
-    return { problemCase, evidence };
-  }
-
-  throw createHttpError(404, "Доказательство не найдено");
-}
 
 function replaceCase(data, nextCase) {
   const index = data.cases.findIndex((item) => item.id === nextCase.id);
@@ -160,6 +110,10 @@ async function routeApi(req, res, store, options = {}) {
 
   if (method === "GET" && pathname === "/api/openapi") {
     sendJson(res, 200, buildApiDocs());
+    return true;
+  }
+
+  if (await handleAnalyticsRoutes(req, res, store, { pathname, method })) {
     return true;
   }
 
@@ -241,12 +195,6 @@ async function routeApi(req, res, store, options = {}) {
   if (method === "GET" && pathname === "/api/me") {
     const { user } = await requireUser(req, store);
     sendJson(res, 200, { user: sanitizeUser(user) });
-    return true;
-  }
-
-  if (method === "GET" && pathname === "/api/me/analytics") {
-    const { data, user } = await requireUser(req, store);
-    sendJson(res, 200, buildUserAnalytics(data, user));
     return true;
   }
 
@@ -347,13 +295,6 @@ async function routeApi(req, res, store, options = {}) {
       .map((item) => enrichCase(item, data, user))
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     sendJson(res, 200, { items, total: items.length });
-    return true;
-  }
-
-  if (method === "GET" && pathname === "/api/expert/analytics") {
-    const { data, user } = await requireUser(req, store);
-    assertRole(user, [ROLES.ADMIN, ROLES.EXPERT], "Expert role required");
-    sendJson(res, 200, buildExpertWorkAnalytics(data, user));
     return true;
   }
 
@@ -773,13 +714,6 @@ async function routeApi(req, res, store, options = {}) {
       auditLogs: data.auditLogs.length,
       byStatus
     });
-    return true;
-  }
-
-  if (method === "GET" && pathname === "/api/admin/analytics") {
-    const { data, user } = await requireUser(req, store);
-    requireAdmin(user);
-    sendJson(res, 200, buildAdminAnalytics(data));
     return true;
   }
 
